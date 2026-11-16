@@ -22,6 +22,10 @@ npm run start:dev
 
 The API listens on port 3000 by default, uses the `/api` prefix, and allows the Vite origin from `CORS_ORIGIN`.
 
+## Email campaigns
+
+Campaign drafts, audiences, consent checks, and schedules are stored in Neon. Marketing sends use Zoho Campaigns; individual contact emails and one-address test emails continue to use the configured ZeptoMail endpoint. Set the `ZOHO_CAMPAIGNS_*` variables in `.env` or the Render service environment. The Zoho OAuth refresh token must include campaign create/update/delete and contact create/update scopes. Set the verified Campaigns sender address, and set `ZOHO_CAMPAIGNS_TOPIC_ID` if the account requires topic management. In Render, `RENDER_EXTERNAL_URL` is used as the public campaign-content URL; locally, set `API_PUBLIC_URL` to a publicly reachable API URL. Campaigns are created and scheduled in Zoho so scheduled delivery does not depend on the Render process staying awake. Pausing or cancelling a scheduled campaign deletes its Zoho Campaigns copy; resuming creates and schedules it again.
+
 ## API
 
 - `GET/POST /api/contacts`, `GET/PATCH/DELETE /api/contacts/:id`
@@ -31,6 +35,7 @@ The API listens on port 3000 by default, uses the `/api` prefix, and allows the 
 - `POST /api/files` multipart form field `file` (20 MB maximum)
 - `GET /api/files`, `GET /api/files/:id/url`, `DELETE /api/files/:id`
 - `GET /api/health`
+- `GET/POST /api/campaigns`, `PATCH /api/campaigns/:id`, and campaign approval, send, schedule, pause, cancel, and public content endpoints
 
 Files are stored privately under generated object keys. The API returns a five-minute signed download URL; original filenames are metadata only. File metadata lives in Postgres and is cleaned up if the object upload fails.
 

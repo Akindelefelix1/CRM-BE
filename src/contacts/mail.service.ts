@@ -10,6 +10,20 @@ type ContactRecord = typeof contacts.$inferSelect;
 
 @Injectable()
 export class MailService {
+  async sendCampaignTestEmail(toValue: unknown, subjectValue: unknown, blocks: unknown) {
+    if (typeof toValue !== 'string' || !/^\S+@\S+\.\S+$/.test(toValue.trim())) {
+      throw new BadRequestException('Enter a valid test email address');
+    }
+    const now = new Date();
+    const recipient = {
+      id: 'campaign-test', firstName: 'Test', lastName: 'Recipient', email: toValue.trim(),
+      alternateEmails: [], phone: null, organization: null, category: 'Uncategorized', location: null,
+      interests: [], tags: [], emailConsent: 'Subscribed' as const, smsConsent: 'Pending' as const,
+      createdAt: now, updatedAt: now,
+    } satisfies ContactRecord;
+    return this.sendCampaignEmail(recipient, this.readText(subjectValue, 'subject', 200), blocks, `test-${crypto.randomUUID()}`);
+  }
+
   async sendContactEmail(contact: ContactRecord, input: Record<string, unknown>) {
     if (contact.emailConsent !== 'Subscribed') {
       throw new BadRequestException('Email can only be sent to contacts with subscribed email consent');
@@ -22,6 +36,49 @@ export class MailService {
     }
     const subject = this.personalize(subjectTemplate, contact);
     const body = this.personalize(bodyTemplate, contact);
+    await this.send(contact, subject, body, `<div style="font-family:Arial,sans-serif;white-space:pre-wrap">${this.escapeHtml(body)}</div>`, `contact-${contact.id}`);
+    return { sent: true, to: contact.email };
+  }
+
+  async sendCampaignEmail(contact: ContactRecord, subjectTemplate: string, blocks: unknown, campaignId: string) {
+    if (contact.emailConsent !== 'Subscribed') {
+      throw new BadRequestException('Email can only be sent to contacts with subscribed email consent');
+    }
+    const subject = this.personalize(this.readText(subjectTemplate, 'subject', 200), contact);
+    if (/\r\n/.test(subject)) throw new BadRequestException('subject must fit on a single line');
+    if (!Array.isArray(blocks)) throw new BadRequestException('Email content blocks are invalid');
+    let text = '';
+    let html = '';
+    for (const item of blocks) {
+      if (!item || typeof item !== 'object') continue;
+      const block = item as Record<string, unknown>;
+      const content = typeof block.content === 'string' ? this.personalize(block.content, contact) : '';
+      const safe = this.escapeHtml(content).replace(/\n/g, '<br>');
+      switch (block.type) {
+        case 'text': text += `${content}\n\n`; html += `<p>${safe}</p>`; break;
+        case 'divider': text += '\n'; html += '<hr>'; break;
+        case 'image': {
+          const url = this.safeHttpsUrl(typeof block.content === 'string' ? this.personalize(block.content, contact) : '');
+          if (url) html += `<p><img src="${this.escapeHtml(url)}" alt="Email image" style="max-width:100%;height:auto"></p>`;
+          break;
+        }
+        case 'link':
+        case 'button': {
+          const url = this.safeHttpsUrl(typeof block.url === 'string' ? this.personalize(block.url, contact) : '');
+          if (url) {
+            text += `${content}: ${url}\n`;
+            html += `<p><a href="${this.escapeHtml(url)}">${safe || this.escapeHtml(url)}</a></p>`;
+          } else if (content) { text += `${content}\n`; html += `<p>${safe}</p>`; }
+          break;
+        }
+      }
+    }
+    if (!text.trim() && !html.trim()) throw new BadRequestException('Email content is empty');
+    await this.send(contact, subject, text.trim() || subject, `<div style="font-family:Arial,sans-serif;line-height:1.6">${html}</div>`, `campaign-${campaignId}-${contact.id}`);
+    return { sent: true, to: contact.email };
+  }
+
+  private async send(contact: ContactRecord, subject: string, body: string, htmlBody: string, reference: string) {
     const endpoint = process.env.ZOHO_MAIL_API_URL?.trim();
     const token = process.env.ZOHO_MAIL_API_TOKEN?.trim();
     const fromAddress = process.env.ZOHO_MAIL_FROM?.trim();
@@ -54,8 +111,8 @@ export class MailService {
           to: [{ email_address: { address: contact.email, name: [contact.firstName, contact.lastName].filter(Boolean).join(' ') } }],
           subject,
           textbody: body,
-          htmlbody: `<div style="font-family:Arial,sans-serif;white-space:pre-wrap">${this.escapeHtml(body)}</div>`,
-          client_reference: `contact-${contact.id}`,
+          htmlbody: htmlBody,
+          client_reference: reference,
         }),
         signal: AbortSignal.timeout(Number.isFinite(timeout) && timeout > 0 ? timeout : 15000),
       });
@@ -70,7 +127,13 @@ export class MailService {
       throw new BadGatewayException('Could not connect to Zoho email. Please retry.');
     }
 
-    return { sent: true, to: contact.email };
+  }
+
+  private safeHttpsUrl(value: string) {
+    try {
+      const url = new URL(value);
+      return url.protocol === 'https:' ? url.toString() : '';
+    } catch { return ''; }
   }
 
   private readText(value: unknown, field: string, maxLength: number) {

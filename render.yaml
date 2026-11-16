@@ -15,6 +15,22 @@ services:
         value: "5"
       - key: CORS_ORIGIN
         sync: false
+      - key: ZOHO_CAMPAIGNS_API_URL
+        value: https://campaigns.zoho.com/api/v1.1
+      - key: ZOHO_CAMPAIGNS_ACCOUNTS_URL
+        value: https://accounts.zoho.com
+      - key: ZOHO_CAMPAIGNS_CLIENT_ID
+        sync: false
+      - key: ZOHO_CAMPAIGNS_CLIENT_SECRET
+        sync: false
+      - key: ZOHO_CAMPAIGNS_REFRESH_TOKEN
+        sync: false
+      - key: ZOHO_CAMPAIGNS_FROM_EMAIL
+        sync: false
+      - key: ZOHO_CAMPAIGNS_FROM_NAME
+        value: Cephas CRM
+      - key: ZOHO_CAMPAIGNS_TOPIC_ID
+        sync: false
       - key: AWS_ENDPOINT_URL_S3
         sync: false
       - key: AWS_ACCESS_KEY_ID

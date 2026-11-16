@@ -65,6 +65,36 @@ export const audienceMembers = pgTable(
   (table) => [primaryKey({ columns: [table.audienceId, table.contactId] })],
 );
 
+export const campaigns = pgTable(
+  'campaigns',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    name: text('name').notNull().unique(),
+    channel: text('channel').notNull().default('Email'),
+    status: text('status').notNull().default('Draft'),
+    objective: text('objective').notNull().default(''),
+    subject: text('subject').notNull(),
+    blocks: text('blocks').notNull().default('[]'),
+    includedAudiences: text('included_audiences').array().notNull().default([]),
+    excludedAudiences: text('excluded_audiences').array().notNull().default([]),
+    excludedContacts: text('excluded_contacts').array().notNull().default([]),
+    attachmentNames: text('attachment_names').array().notNull().default([]),
+    scheduledAt: timestamp('scheduled_at', { withTimezone: true }),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    recipientCount: integer('recipient_count').notNull().default(0),
+    deliveredCount: integer('delivered_count').notNull().default(0),
+    failedCount: integer('failed_count').notNull().default(0),
+    deliveredContactIds: text('delivered_contact_ids').array().notNull().default([]),
+    failedContactIds: text('failed_contact_ids').array().notNull().default([]),
+    zohoListKey: text('zoho_list_key'),
+    zohoCampaignKey: text('zoho_campaign_key'),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('campaigns_status_schedule_idx').on(table.status, table.scheduledAt)],
+);
+
 export const storedFiles = pgTable('stored_files', {
   id: uuid('id').defaultRandom().primaryKey(),
   objectKey: text('object_key').notNull().unique(),

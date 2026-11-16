@@ -22,6 +22,27 @@
       "when": 1794826945116,
       "tag": "0002_narrow_nehzno",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794840042250,
+      "tag": "0003_needy_human_fly",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794841707829,
+      "tag": "0004_fine_pyro",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794842894061,
+      "tag": "0005_clever_blink",
+      "breakpoints": true
     }
   ]
 }
