@@ -8,7 +8,7 @@ import { FilesModule } from './files/files.module.js';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env.local', '.env'] }),
+    ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env', '.env.local'] }),
     DatabaseModule,
     ContactsModule,
     AudiencesModule,

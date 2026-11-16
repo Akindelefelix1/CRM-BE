@@ -12,12 +12,13 @@ NestJS REST API for CRM contacts, audience groups, and private file uploads. Pos
 ```sh
 npm install
 cp .env.example .env
+neon env pull
 npm run db:generate
 npm run db:migrate
 npm run start:dev
 ```
 
-Set `DATABASE_URL` and the `AWS_*` Object Storage credentials in `.env`. `neon.ts` declares a private `uploads` bucket. Run `neon deploy` after linking the CLI to provision it and populate branch-scoped credentials. Keep `.env` private; `.env.example` contains placeholders only.
+`neon env pull` fills the Neon-managed database, Auth, and Object Storage values into `.env` while preserving app settings. The API loads `.env` first and `.env.local` only as a fallback. `neon.ts` declares a private `uploads` bucket; run `neon deploy` after linking to provision it. Keep `.env` private; `.env.example` contains placeholders only.
 
 The API listens on port 3000 by default, uses the `/api` prefix, and allows the Vite origin from `CORS_ORIGIN`.
 
