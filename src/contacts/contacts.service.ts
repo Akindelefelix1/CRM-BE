@@ -110,11 +110,56 @@ export class ContactsService {
     const allowed = ['firstName', 'lastName', 'email', 'alternateEmails', 'phone', 'organization', 'category', 'location', 'interests', 'tags', 'emailConsent', 'smsConsent'] as const;
     const values: Record<string, unknown> = {};
     for (const key of allowed) if (key in input) values[key] = input[key];
-    if (typeof values.email === 'string') values.email = values.email.trim().toLowerCase();
-    if (typeof values.firstName === 'string') values.firstName = values.firstName.trim();
-    if (typeof values.lastName === 'string') values.lastName = values.lastName.trim();
-    if (typeof values.category === 'string') values.category = values.category.trim() || 'Uncategorized';
-    if (!partial && (!values.firstName || !values.email)) throw new BadRequestException('firstName and email are required');
+    if (!partial || 'email' in values) {
+      if (typeof values.email !== 'string' || !/^\S+@\S+\.\S+$/.test(values.email.trim())) {
+        throw new BadRequestException('A valid email address is required');
+      }
+      values.email = values.email.trim().toLowerCase();
+    }
+    if (!partial || 'firstName' in values) {
+      if (typeof values.firstName !== 'string' || !values.firstName.trim()) {
+        throw new BadRequestException('firstName is required');
+      }
+      values.firstName = values.firstName.trim();
+    }
+    if ('lastName' in values) {
+      if (values.lastName !== null && typeof values.lastName !== 'string') {
+        throw new BadRequestException('lastName must be a string');
+      }
+      values.lastName = typeof values.lastName === 'string' ? values.lastName.trim() : '';
+    }
+    if ('category' in values) {
+      if (values.category !== null && typeof values.category !== 'string') {
+        throw new BadRequestException('category must be a string');
+      }
+      values.category = typeof values.category === 'string' ? values.category.trim() || 'Uncategorized' : 'Uncategorized';
+    }
+    for (const key of ['phone', 'organization', 'location'] as const) {
+      if (!(key in values)) continue;
+      if (values[key] !== null && typeof values[key] !== 'string') {
+        throw new BadRequestException(`${key} must be a string or null`);
+      }
+      values[key] = typeof values[key] === 'string' ? values[key].trim() || null : null;
+    }
+    for (const key of ['alternateEmails', 'interests', 'tags'] as const) {
+      if (!(key in values)) continue;
+      if (!Array.isArray(values[key]) || values[key].some((value) => typeof value !== 'string')) {
+        throw new BadRequestException(`${key} must be an array of strings`);
+      }
+      const cleaned = (values[key] as string[]).map((value) => value.trim()).filter(Boolean);
+      values[key] = key === 'alternateEmails'
+        ? [...new Set(cleaned.map((value) => value.toLowerCase()).filter((value) => value !== values.email))]
+        : [...new Set(cleaned)];
+      if (key === 'alternateEmails' && (values[key] as string[]).some((value) => !/^\S+@\S+\.\S+$/.test(value))) {
+        throw new BadRequestException('alternateEmails must contain valid email addresses');
+      }
+    }
+    for (const key of ['emailConsent', 'smsConsent'] as const) {
+      if (!(key in values)) continue;
+      if (!['Subscribed', 'Unsubscribed', 'Pending'].includes(String(values[key]))) {
+        throw new BadRequestException(`${key} must be Subscribed, Unsubscribed, or Pending`);
+      }
+    }
     return values as Partial<typeof contacts.$inferInsert>;
   }
 }
