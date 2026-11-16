@@ -1,1 +1,1 @@
-ALTER TABLE "stored_files" ALTER COLUMN "size_bytes" SET DATA TYPE integer;
+ALTER TABLE "stored_files" ALTER COLUMN "size_bytes" SET DATA TYPE integer USING "size_bytes"::integer;

@@ -25,13 +25,26 @@ export class AudiencesService {
 
   async create(input: Record<string, unknown>) {
     if (typeof input.name !== 'string' || !input.name.trim()) throw new BadRequestException('name is required');
-    const [row] = await this.database.db.insert(audiences).values({
-      name: input.name.trim(),
-      description: typeof input.description === 'string' ? input.description : null,
-      type: input.type === 'dynamic' ? 'dynamic' : 'static',
-      rules: JSON.stringify(Array.isArray(input.rules) ? input.rules : []),
-    }).returning();
-    return { ...row, rules: JSON.parse(row.rules) };
+    const name = input.name.trim();
+    const contactIds = Array.isArray(input.contactIds)
+      ? [...new Set(input.contactIds.filter((id): id is string => typeof id === 'string'))]
+      : [];
+    return this.database.db.transaction(async (tx) => {
+      if (contactIds.length) {
+        const existing = await tx.select({ id: contacts.id }).from(contacts).where(inArray(contacts.id, contactIds));
+        if (existing.length !== contactIds.length) throw new NotFoundException('One or more contacts were not found');
+      }
+      const [row] = await tx.insert(audiences).values({
+        name,
+        description: typeof input.description === 'string' ? input.description : null,
+        type: input.type === 'dynamic' ? 'dynamic' : 'static',
+        rules: JSON.stringify(Array.isArray(input.rules) ? input.rules : []),
+      }).returning();
+      if (contactIds.length) {
+        await tx.insert(audienceMembers).values(contactIds.map((contactId) => ({ audienceId: row.id, contactId }))).onConflictDoNothing();
+      }
+      return { ...row, rules: JSON.parse(row.rules), memberCount: contactIds.length };
+    });
   }
 
   async update(id: string, input: Record<string, unknown>) {

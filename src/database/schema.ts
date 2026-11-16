@@ -23,6 +23,7 @@ export const contacts = pgTable(
     firstName: text('first_name').notNull(),
     lastName: text('last_name').notNull().default(''),
     email: text('email').notNull().unique(),
+    alternateEmails: text('alternate_emails').array().notNull().default([]),
     phone: text('phone'),
     organization: text('organization'),
     category: text('category').notNull().default('Uncategorized'),
@@ -36,6 +37,13 @@ export const contacts = pgTable(
   },
   (table) => [index('contacts_name_idx').on(table.lastName, table.firstName)],
 );
+
+export const contactCategories = pgTable('contact_categories', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  name: text('name').notNull().unique(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
 
 export const audiences = pgTable('audiences', {
   id: uuid('id').defaultRandom().primaryKey(),
