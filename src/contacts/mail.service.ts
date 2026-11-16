@@ -96,6 +96,14 @@ export class MailService {
     if (parsedEndpoint.protocol !== 'https:') {
       throw new ServiceUnavailableException('The email provider must use HTTPS');
     }
+    // Zoho's current ZeptoMail Mail Send API uses the CPaaS endpoint. Keep
+    // older Render/.env configurations working by translating the legacy
+    // api.zeptomail.com host while preserving its API path and query string.
+    if (parsedEndpoint.hostname === 'api.zeptomail.com') {
+      parsedEndpoint.hostname = 'cpaas.zoho.com';
+    } else if (parsedEndpoint.hostname === 'api.zeptomail.eu') {
+      parsedEndpoint.hostname = 'cpaas.zoho.eu';
+    }
 
     const timeout = Number(process.env.MAIL_SEND_TIMEOUT_MS);
     try {
@@ -117,7 +125,19 @@ export class MailService {
         signal: AbortSignal.timeout(Number.isFinite(timeout) && timeout > 0 ? timeout : 15000),
       });
       if (!response.ok) {
-        throw new BadGatewayException(`Zoho could not send the email (HTTP ${response.status})`);
+        const responseBody = await response.text().catch(() => '');
+        let providerMessage = '';
+        try {
+          const payload = JSON.parse(responseBody) as { message?: unknown; error?: unknown; code?: unknown };
+          const detail = [payload.message, payload.error, payload.code]
+            .find((value) => typeof value === 'string' && value.trim());
+          if (typeof detail === 'string') providerMessage = detail.replace(/\s+/g, ' ').slice(0, 240);
+        } catch {
+          // Do not include an unstructured provider response in the API error.
+        }
+        throw new BadGatewayException(
+          `Zoho could not send the email (HTTP ${response.status})${providerMessage ? `: ${providerMessage}` : ''}`,
+        );
       }
     } catch (error) {
       if (error instanceof BadGatewayException) throw error;
