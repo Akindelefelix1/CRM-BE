@@ -107,13 +107,29 @@ export class AudiencesService {
     if ('type' in input) patch.type = this.readType(input.type);
     if ('rules' in input) patch.rules = JSON.stringify(this.readRulesInput(input.rules, (patch.type ?? current.type) as 'static' | 'dynamic'));
     const nextType = patch.type ?? current.type;
+    const contactIds = 'contactIds' in input ? this.readContactIds(input.contactIds) : undefined;
+    if (nextType === 'dynamic' && contactIds?.length) {
+      throw new BadRequestException('Dynamic audiences use rules instead of saved member IDs');
+    }
     if (nextType === 'dynamic' && !('rules' in input)) {
       const existingRules = this.readRules(current.rules);
       if (!existingRules.length) throw new BadRequestException('Dynamic audiences need at least one rule');
     }
     const [updated] = await this.database.db.transaction(async (tx) => {
-      if (nextType === 'dynamic') {
+      if (nextType === 'dynamic' || contactIds !== undefined) {
         await tx.delete(audienceMembers).where(eq(audienceMembers.audienceId, id));
+      }
+      if (nextType === 'static' && contactIds?.length) {
+        const existing = await tx
+          .select({ id: contacts.id })
+          .from(contacts)
+          .where(inArray(contacts.id, contactIds));
+        if (existing.length !== contactIds.length) {
+          throw new NotFoundException('One or more contacts were not found');
+        }
+        await tx.insert(audienceMembers)
+          .values(contactIds.map((contactId) => ({ audienceId: id, contactId })))
+          .onConflictDoNothing();
       }
       return tx.update(audiences).set(patch).where(eq(audiences.id, id)).returning();
     });
