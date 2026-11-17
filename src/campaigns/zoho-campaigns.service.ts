@@ -195,18 +195,18 @@ export class ZohoCampaignsService {
     try {
       const query = new URLSearchParams(params);
       const [endpoint, queryString] = path.split('?');
-      const endpointQuery = queryString ? `?${queryString}` : '';
-      const requestUrl = method === 'GET'
-        ? `${base}/${endpoint}${endpointQuery}${queryString ? '&' : '?'}${query}`
-        : `${base}/${endpoint}${endpointQuery}`;
+      // Zoho Campaigns v1.1 documents POST parameters on the request URL.
+      // Sending the same parameters in both URL and form body is rejected as
+      // duplicate keys; sending them only in the body is silently ignored by
+      // some Campaigns endpoints. Keep endpoint flags (for example
+      // isschedule=true) and request parameters together in the query string.
+      const requestUrl = `${base}/${endpoint}${queryString ? `?${queryString}&` : '?'}${query}`;
       response = await fetch(requestUrl, {
         method,
         headers: {
           Authorization: `Zoho-oauthtoken ${token}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
           Accept: 'application/json',
         },
-        ...(method === 'POST' ? { body: query } : {}),
         signal: AbortSignal.timeout(30_000),
       });
     } catch (error) {
@@ -242,9 +242,10 @@ export class ZohoCampaignsService {
       status === 'failure' ||
       status === 'error'
     ) {
-      let message =
-        typeof nested.message === 'string'
-          ? nested.message
+      let message = typeof nested.message === 'string' && nested.message.trim()
+        ? nested.message.trim()
+        : code
+          ? `Zoho Campaigns returned error code ${code} (HTTP ${response.status})`
           : `Zoho Campaigns returned HTTP ${response.status}`;
       if (/invalid_scope/i.test(message)) {
         message = `The Zoho OAuth grant is missing ${requiredScope}. Re-authorize the Self Client with the required Campaigns scopes.`;
