@@ -195,8 +195,11 @@ export class ZohoCampaignsService {
     try {
       const query = new URLSearchParams(params);
       const [endpoint, queryString] = path.split('?');
-      const suffix = queryString ? `?${queryString}&${query}` : `?${query}`;
-      response = await fetch(`${base}/${endpoint}${suffix}`, {
+      const endpointQuery = queryString ? `?${queryString}` : '';
+      const requestUrl = method === 'GET'
+        ? `${base}/${endpoint}${endpointQuery}${queryString ? '&' : '?'}${query}`
+        : `${base}/${endpoint}${endpointQuery}`;
+      response = await fetch(requestUrl, {
         method,
         headers: {
           Authorization: `Zoho-oauthtoken ${token}`,
