@@ -150,3 +150,21 @@ export const campaignDeliveries = pgTable(
     uniqueIndex('campaign_deliveries_campaign_contact_unique').on(table.campaignId, table.contactId),
   ],
 );
+
+export const auditEvents = pgTable(
+  'audit_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    actorId: text('actor_id').notNull(),
+    actorName: text('actor_name').notNull(),
+    actorEmail: text('actor_email'),
+    action: text('action').notNull(),
+    details: text('details').notNull().default(''),
+    eventType: text('event_type').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('audit_events_actor_created_idx').on(table.actorId, table.createdAt),
+    index('audit_events_actor_type_idx').on(table.actorId, table.eventType),
+  ],
+);

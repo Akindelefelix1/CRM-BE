@@ -11,6 +11,7 @@ import { CampaignsModule } from './campaigns/campaigns.module.js';
 import { TemplatesModule } from './templates/templates.module.js';
 import { NeonAuthGuard } from './auth/neon-auth.guard.js';
 import { AnalyticsModule } from './analytics/analytics.module.js';
+import { AuditModule } from './audit/audit.module.js';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { AnalyticsModule } from './analytics/analytics.module.js';
     CampaignsModule,
     TemplatesModule,
     AnalyticsModule,
+    AuditModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: NeonAuthGuard }],
