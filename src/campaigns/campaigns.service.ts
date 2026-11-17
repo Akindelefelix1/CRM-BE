@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { DatabaseService } from '../database/database.service.js';
 import {
   audienceMembers,
@@ -44,7 +44,7 @@ export class CampaignsService {
     return this.database.db
       .select()
       .from(campaigns)
-      .orderBy(campaigns.createdAt);
+      .orderBy(desc(campaigns.createdAt));
   }
 
   smsProviderStatus() {

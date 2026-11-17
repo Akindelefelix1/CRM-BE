@@ -10,6 +10,7 @@ import { CategoriesModule } from './categories/categories.module.js';
 import { CampaignsModule } from './campaigns/campaigns.module.js';
 import { TemplatesModule } from './templates/templates.module.js';
 import { NeonAuthGuard } from './auth/neon-auth.guard.js';
+import { AnalyticsModule } from './analytics/analytics.module.js';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { NeonAuthGuard } from './auth/neon-auth.guard.js';
     CategoriesModule,
     CampaignsModule,
     TemplatesModule,
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: NeonAuthGuard }],
