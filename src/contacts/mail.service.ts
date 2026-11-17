@@ -33,6 +33,7 @@ export class MailService {
       tags: [],
       emailConsent: 'Subscribed' as const,
       smsConsent: 'Pending' as const,
+      whatsappConsent: 'Pending' as const,
       createdAt: now,
       updatedAt: now,
     } satisfies ContactRecord;

@@ -7,6 +7,7 @@ import { AudiencesModule } from './audiences/audiences.module.js';
 import { FilesModule } from './files/files.module.js';
 import { CategoriesModule } from './categories/categories.module.js';
 import { CampaignsModule } from './campaigns/campaigns.module.js';
+import { TemplatesModule } from './templates/templates.module.js';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { CampaignsModule } from './campaigns/campaigns.module.js';
     FilesModule,
     CategoriesModule,
     CampaignsModule,
+    TemplatesModule,
   ],
   controllers: [AppController],
 })

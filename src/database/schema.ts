@@ -7,6 +7,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 
@@ -32,6 +33,7 @@ export const contacts = pgTable(
     tags: text('tags').array().notNull().default([]),
     emailConsent: consentStatus('email_consent').notNull().default('Pending'),
     smsConsent: consentStatus('sms_consent').notNull().default('Pending'),
+    whatsappConsent: consentStatus('whatsapp_consent').notNull().default('Pending'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -88,11 +90,36 @@ export const campaigns = pgTable(
     failedContactIds: text('failed_contact_ids').array().notNull().default([]),
     zohoListKey: text('zoho_list_key'),
     zohoCampaignKey: text('zoho_campaign_key'),
+    whatsappTemplate: text('whatsapp_template'),
+    whatsappSender: text('whatsapp_sender'),
+    whatsappMergeInfo: text('whatsapp_merge_info').notNull().default('{}'),
     lastError: text('last_error'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index('campaigns_status_schedule_idx').on(table.status, table.scheduledAt)],
+);
+
+export const templates = pgTable(
+  'templates',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    name: text('name').notNull().unique(),
+    channel: text('channel').notNull().default('Email'),
+    subject: text('subject').notNull().default(''),
+    body: text('body').notNull().default(''),
+    emailBlocks: text('email_blocks').notNull().default('[]'),
+    attachments: text('attachments').array().notNull().default([]),
+    objective: text('objective').notNull().default(''),
+    whatsappTemplate: text('whatsapp_template'),
+    whatsappSender: text('whatsapp_sender'),
+    whatsappMergeInfo: text('whatsapp_merge_info').notNull().default('{}'),
+    isDefault: boolean('is_default').notNull().default(false),
+    useCount: integer('use_count').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('templates_channel_idx').on(table.channel)],
 );
 
 export const storedFiles = pgTable('stored_files', {
@@ -104,3 +131,22 @@ export const storedFiles = pgTable('stored_files', {
   isPrivate: boolean('is_private').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const campaignDeliveries = pgTable(
+  'campaign_deliveries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    campaignId: uuid('campaign_id').notNull().references(() => campaigns.id, { onDelete: 'cascade' }),
+    contactId: uuid('contact_id').notNull().references(() => contacts.id, { onDelete: 'cascade' }),
+    providerMessageId: text('provider_message_id'),
+    status: text('status').notNull().default('queued'),
+    error: text('error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('campaign_deliveries_campaign_idx').on(table.campaignId),
+    index('campaign_deliveries_contact_idx').on(table.contactId),
+    uniqueIndex('campaign_deliveries_campaign_contact_unique').on(table.campaignId, table.contactId),
+  ],
+);

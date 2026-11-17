@@ -107,7 +107,7 @@ export class ContactsService {
   }
 
   private normalize(input: Record<string, unknown>, partial = false): Partial<typeof contacts.$inferInsert> {
-    const allowed = ['firstName', 'lastName', 'email', 'alternateEmails', 'phone', 'organization', 'category', 'location', 'interests', 'tags', 'emailConsent', 'smsConsent'] as const;
+    const allowed = ['firstName', 'lastName', 'email', 'alternateEmails', 'phone', 'organization', 'category', 'location', 'interests', 'tags', 'emailConsent', 'smsConsent', 'whatsappConsent'] as const;
     const values: Record<string, unknown> = {};
     for (const key of allowed) if (key in input) values[key] = input[key];
     if (!partial || 'email' in values) {
@@ -154,7 +154,7 @@ export class ContactsService {
         throw new BadRequestException('alternateEmails must contain valid email addresses');
       }
     }
-    for (const key of ['emailConsent', 'smsConsent'] as const) {
+    for (const key of ['emailConsent', 'smsConsent', 'whatsappConsent'] as const) {
       if (!(key in values)) continue;
       if (!['Subscribed', 'Unsubscribed', 'Pending'].includes(String(values[key]))) {
         throw new BadRequestException(`${key} must be Subscribed, Unsubscribed, or Pending`);

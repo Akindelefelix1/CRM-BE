@@ -26,6 +26,14 @@ The API listens on port 3000 by default, uses the `/api` prefix, and allows the 
 
 Campaign drafts, audiences, consent checks, and schedules are stored in Neon. Marketing sends use Zoho Campaigns; individual contact emails and one-address test emails continue to use the configured ZeptoMail endpoint. Set the `ZOHO_CAMPAIGNS_*` variables in `.env` or the Render service environment. The Zoho OAuth refresh token must include campaign create/update/delete and contact create/update scopes. Set the verified Campaigns sender address, and set `ZOHO_CAMPAIGNS_TOPIC_ID` if the account requires topic management. In Render, `RENDER_EXTERNAL_URL` is used as the public campaign-content URL; locally, set `API_PUBLIC_URL` to a publicly reachable API URL. Campaigns are created and scheduled in Zoho so scheduled delivery does not depend on the Render process staying awake. Pausing or cancelling a scheduled campaign deletes its Zoho Campaigns copy; resuming creates and schedules it again.
 
+## Bulk SMS
+
+SMS campaigns are saved in Neon and sent through Termii's bulk messaging endpoint in batches of up to 100 numbers. Configure `TERMII_API_KEY`, `TERMII_BASE_URL`, `TERMII_SENDER_ID`, `TERMII_COUNTRY_CODE` (defaults to `234`), and `TERMII_CHANNEL` (defaults to the promotional `generic` route) in the API environment. Register and activate the sender ID in Termii first. The CRM sends only to contacts with SMS consent set to `Subscribed`, resolves audience exclusions, normalizes Nigerian local numbers to international format, and records provider-accepted and failed counts. Delivery receipts are not configured, so accepted counts are not handset delivery confirmation. Scheduled SMS is not enabled: Termii's campaign scheduler requires a Termii phonebook, while this CRM resolves contacts from its own audience database.
+
+## WhatsApp campaigns
+
+WhatsApp messages are sent individually through Zoho CPaaS using an approved template. Configure `ZOHO_WHATSAPP_API_KEY` with the WhatsApp API key for the sending Agent; `ZOHO_WHATSAPP_API_URL` defaults to `https://cpaas.zoho.com/v1.1/whatsapp`. Each draft stores the sender number, template key or alias, and a JSON map of template merge values. Values may include `{{first_name}}`, `{{last_name}}`, `{{full_name}}`, `{{email}}`, `{{phone}}`, or `{{organization}}`. The CRM requires separate WhatsApp consent, only includes opted-in contacts, and stores CPaaS message IDs. Delivery refresh queries CPaaS logs and updates delivered, read, failed, and pending counts. CPaaS supports Utility and Authentication templates; its Marketing templates are not supported. Schedule support is disabled because campaign contacts are not synchronized to CPaaS phonebooks.
+
 ## API
 
 - `GET/POST /api/contacts`, `GET/PATCH/DELETE /api/contacts/:id`
@@ -36,6 +44,9 @@ Campaign drafts, audiences, consent checks, and schedules are stored in Neon. Ma
 - `GET /api/files`, `GET /api/files/:id/url`, `DELETE /api/files/:id`
 - `GET /api/health`
 - `GET/POST /api/campaigns`, `PATCH /api/campaigns/:id`, and campaign approval, send, schedule, pause, cancel, and public content endpoints
+- `GET /api/campaigns/sms/provider-status` returns non-secret Termii configuration status
+- `GET /api/campaigns/whatsapp/provider-status` returns non-secret Zoho CPaaS configuration status
+- `GET /api/campaigns/:id/whatsapp-delivery` refreshes message states from Zoho CPaaS
 
 Files are stored privately under generated object keys. The API returns a five-minute signed download URL; original filenames are metadata only. File metadata lives in Postgres and is cleaned up if the object upload fails.
 

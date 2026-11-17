@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: free
     buildCommand: npm ci --include=dev && npm run build
-    startCommand: npm run start:prod
+    startCommand: npm run db:migrate && npm run start:prod
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
@@ -31,6 +31,26 @@ services:
         value: Cephas CRM
       - key: ZOHO_CAMPAIGNS_TOPIC_ID
         sync: false
+      - key: TERMII_API_KEY
+        sync: false
+      - key: TERMII_BASE_URL
+        value: https://api.ng.termii.com
+      - key: TERMII_SENDER_ID
+        sync: false
+      - key: TERMII_COUNTRY_CODE
+        value: "234"
+      - key: TERMII_CHANNEL
+        value: generic
+      - key: ZOHO_WHATSAPP_API_URL
+        value: https://cpaas.zoho.com/v1.1/whatsapp
+      - key: ZOHO_WHATSAPP_API_KEY
+        sync: false
+      - key: ZOHO_WHATSAPP_AGENT_ID
+        sync: false
+      - key: ZOHO_WHATSAPP_FROM
+        sync: false
+      - key: ZOHO_WHATSAPP_COUNTRY_CODE
+        value: "234"
       - key: AWS_ENDPOINT_URL_S3
         sync: false
       - key: AWS_ACCESS_KEY_ID

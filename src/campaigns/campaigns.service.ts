@@ -9,11 +9,14 @@ import { DatabaseService } from '../database/database.service.js';
 import {
   audienceMembers,
   audiences,
+  campaignDeliveries,
   campaigns,
   contacts,
 } from '../database/schema.js';
 import { MailService } from '../contacts/mail.service.js';
 import { ZohoCampaignsService } from './zoho-campaigns.service.js';
+import { TermiiService } from './termii.service.js';
+import { ZohoWhatsAppService } from './zoho-whatsapp.service.js';
 
 type CampaignStatus =
   | 'Draft'
@@ -33,6 +36,8 @@ export class CampaignsService {
     private readonly database: DatabaseService,
     private readonly mail: MailService,
     private readonly zoho: ZohoCampaignsService,
+    private readonly termii: TermiiService,
+    private readonly zohoWhatsApp: ZohoWhatsAppService,
   ) {}
 
   async list() {
@@ -40,6 +45,22 @@ export class CampaignsService {
       .select()
       .from(campaigns)
       .orderBy(campaigns.createdAt);
+  }
+
+  smsProviderStatus() {
+    return {
+      configured: Boolean(process.env.TERMII_API_KEY?.trim()),
+      senderId: process.env.TERMII_SENDER_ID?.trim() || null,
+      countryCode: (process.env.TERMII_COUNTRY_CODE || '234').replace(/\D/g, ''),
+      channel: process.env.TERMII_CHANNEL?.trim() || 'generic',
+    };
+  }
+
+  whatsappProviderStatus() {
+    return {
+      configured: this.zohoWhatsApp.configured(),
+      sender: process.env.ZOHO_WHATSAPP_FROM?.trim() || null,
+    };
   }
 
   async create(input: Record<string, unknown>) {
@@ -159,6 +180,10 @@ export class CampaignsService {
 
   async schedule(id: string) {
     const current = await this.get(id);
+    if (current.channel !== 'Email')
+      throw new BadRequestException(
+        'Only email campaign scheduling is enabled. Send this campaign now or save it as a draft.',
+      );
     if (current.status !== 'Draft')
       throw new ConflictException(
         `Campaign cannot be scheduled while it is ${current.status}`,
@@ -167,12 +192,360 @@ export class CampaignsService {
   }
 
   async sendNow(id: string) {
+    const campaign = await this.get(id);
+    if (campaign.channel === 'SMS') return this.sendSms(id);
+    if (campaign.channel === 'WhatsApp') return this.sendWhatsApp(id);
+    if (campaign.channel !== 'Email') throw new BadRequestException('Unsupported campaign channel');
     return this.dispatch(id, [
       'Draft',
       'Approved',
       'Failed',
       'Sent with failures',
     ]);
+  }
+
+  private async sendWhatsApp(id: string) {
+    const [campaign] = await this.database.db
+      .update(campaigns)
+      .set({ status: 'Sending', lastError: null, updatedAt: new Date() })
+      .where(
+        and(
+          eq(campaigns.id, id),
+          inArray(campaigns.status, ['Draft', 'Approved', 'Failed', 'Sent', 'Sent with failures']),
+        ),
+      )
+      .returning();
+    if (!campaign) {
+      const current = await this.get(id);
+      throw new ConflictException(
+        `WhatsApp campaign cannot be sent while it is ${current.status}`,
+      );
+    }
+
+    const sender = campaign.whatsappSender || process.env.ZOHO_WHATSAPP_FROM?.trim() || '';
+    if (!/^\+\d{8,19}$/.test(sender)) {
+      await this.markSmsFailed(id, 'Set a WhatsApp sender number in international format.');
+      throw new BadRequestException(
+        'Set a WhatsApp sender number in international format (for example +2348012345678).',
+      );
+    }
+    const template = campaign.whatsappTemplate?.trim();
+    if (!template) {
+      await this.markSmsFailed(id, 'Select an approved Zoho CPaaS WhatsApp template.');
+      throw new BadRequestException('Select an approved Zoho CPaaS WhatsApp template.');
+    }
+    let mergeInfo: Record<string, string>;
+    try {
+      mergeInfo = JSON.parse(campaign.whatsappMergeInfo || '{}') as Record<string, string>;
+      if (!mergeInfo || Array.isArray(mergeInfo) || typeof mergeInfo !== 'object' ||
+          Object.values(mergeInfo).some((value) => typeof value !== 'string'))
+        throw new Error('invalid');
+    } catch {
+      await this.markSmsFailed(id, 'WhatsApp template variable mapping is invalid.');
+      throw new BadRequestException('WhatsApp template variable mapping must be a JSON object of strings.');
+    }
+
+    try {
+      const recipients = await this.resolveRecipients(
+        campaign.includedAudiences,
+        campaign.excludedAudiences,
+        campaign.excludedContacts,
+        'WhatsApp',
+      );
+      if (!recipients.length)
+        throw new BadRequestException(
+          'No WhatsApp-opted-in contacts match the selected audiences and exclusions.',
+        );
+      const previous = await this.database.db
+        .select()
+        .from(campaignDeliveries)
+        .where(eq(campaignDeliveries.campaignId, id));
+      const deliveryByContact = new Map(previous.map((item) => [item.contactId, item]));
+      let accepted = 0;
+      let failed = 0;
+      const errors: string[] = [];
+      for (let start = 0; start < recipients.length; start += 10) {
+        const batch = recipients.slice(start, start + 10);
+        const outcomes = await Promise.all(batch.map(async (contact) => {
+          const prior = deliveryByContact.get(contact.id);
+          if (prior && ['queued', 'sent', 'delivered', 'read'].includes(prior.status))
+            return { accepted: true as const };
+          const phone = this.normalizeWhatsAppPhone(contact.phone);
+          if (!phone) {
+            await this.saveWhatsAppDelivery(id, contact.id, null, 'failed', 'Missing or invalid phone number');
+            return { accepted: false as const, detail: 'Missing or invalid phone number', email: contact.email };
+          }
+          try {
+            const resolvedMergeInfo = Object.fromEntries(
+              Object.entries(mergeInfo).map(([key, value]) => [
+                key,
+                this.resolveWhatsAppVariable(value, contact),
+              ]),
+            );
+            const response = await this.zohoWhatsApp.send({
+              from: sender,
+              to: phone,
+              template,
+              mergeInfo: resolvedMergeInfo,
+              clientReference: `crm-${id}-${contact.id}`.slice(0, 100),
+            });
+            await this.saveWhatsAppDelivery(id, contact.id, response.message_id!, 'queued', null);
+            deliveryByContact.set(contact.id, {
+              id: '', campaignId: id, contactId: contact.id,
+              providerMessageId: response.message_id!, status: 'queued', error: null,
+              createdAt: new Date(), updatedAt: new Date(),
+            });
+            return { accepted: true as const };
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : 'Zoho CPaaS rejected the WhatsApp message';
+            await this.saveWhatsAppDelivery(id, contact.id, null, 'failed', detail);
+            return { accepted: false as const, detail, email: contact.email };
+          }
+        }));
+        for (const outcome of outcomes) {
+          if (outcome.accepted) accepted++;
+          else {
+            failed++;
+            errors.push(`${outcome.email}: ${outcome.detail}`);
+          }
+        }
+      }
+      const status: CampaignStatus = failed
+        ? accepted
+          ? 'Sent with failures'
+          : 'Failed'
+        : 'Sent';
+      const lastError = errors.length ? errors.join(' ').slice(0, 1000) : null;
+      const [updated] = await this.database.db
+        .update(campaigns)
+        .set({
+          status,
+          recipientCount: recipients.length,
+          deliveredCount: accepted,
+          failedCount: failed,
+          lastError,
+          sentAt: accepted ? new Date() : null,
+          updatedAt: new Date(),
+        })
+        .where(eq(campaigns.id, id))
+        .returning();
+      return {
+        ...updated,
+        delivery: { total: recipients.length, sent: accepted, failed, errors },
+      };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'WhatsApp campaign delivery failed';
+      await this.markSmsFailed(id, detail);
+      throw error;
+    }
+  }
+
+  async refreshWhatsAppDelivery(id: string) {
+    const campaign = await this.get(id);
+    if (campaign.channel !== 'WhatsApp')
+      throw new BadRequestException('Delivery refresh is only available for WhatsApp campaigns.');
+    const rows = await this.database.db
+      .select()
+      .from(campaignDeliveries)
+      .where(eq(campaignDeliveries.campaignId, id));
+    const errors: string[] = [];
+    for (const row of rows) {
+      if (!row.providerMessageId || !['queued', 'sent'].includes(row.status)) continue;
+      try {
+        const response = await this.zohoWhatsApp.getMessage(row.providerMessageId);
+        const status = response.data?.status;
+        if (status && ['queued', 'sent', 'delivered', 'read', 'undelivered', 'failed', 'process_failed'].includes(status))
+          await this.database.db
+            .update(campaignDeliveries)
+            .set({ status, updatedAt: new Date() })
+            .where(eq(campaignDeliveries.id, row.id));
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : 'Could not refresh a delivery status');
+      }
+    }
+    const current = await this.database.db
+      .select()
+      .from(campaignDeliveries)
+      .where(eq(campaignDeliveries.campaignId, id));
+    const delivered = current.filter((item) => ['delivered', 'read'].includes(item.status)).length;
+    const failed = current.filter((item) => ['undelivered', 'failed', 'process_failed'].includes(item.status)).length;
+    const pending = current.filter((item) => ['queued', 'sent'].includes(item.status)).length;
+    const deliveryStatus: CampaignStatus = failed
+      ? delivered || pending
+        ? 'Sent with failures'
+        : 'Failed'
+      : 'Sent';
+    await this.database.db
+      .update(campaigns)
+      .set({ status: deliveryStatus, deliveredCount: delivered, failedCount: failed, updatedAt: new Date() })
+      .where(eq(campaigns.id, id));
+    return { total: current.length, delivered, failed, pending, errors };
+  }
+
+  private async saveWhatsAppDelivery(
+    campaignId: string,
+    contactId: string,
+    providerMessageId: string | null,
+    status: string,
+    error: string | null,
+  ) {
+    await this.database.db
+      .insert(campaignDeliveries)
+      .values({ campaignId, contactId, providerMessageId, status, error })
+      .onConflictDoUpdate({
+        target: [campaignDeliveries.campaignId, campaignDeliveries.contactId],
+        set: { providerMessageId, status, error, updatedAt: new Date() },
+      });
+  }
+
+  private normalizeWhatsAppPhone(phone: string | null) {
+    if (!phone) return null;
+    const trimmed = phone.trim();
+    const digits = trimmed.replace(/\D/g, '');
+    if (!digits) return null;
+    const countryCode = (process.env.ZOHO_WHATSAPP_COUNTRY_CODE || '234').replace(/\D/g, '');
+    const international = trimmed.startsWith('+')
+      ? digits
+      : digits.startsWith(countryCode)
+        ? digits
+        : `${countryCode}${digits.replace(/^0+/, '')}`;
+    return /^\d{8,19}$/.test(international) ? `+${international}` : null;
+  }
+
+  private resolveWhatsAppVariable(value: string, contact: typeof contacts.$inferSelect) {
+    const fields: Record<string, string> = {
+      first_name: contact.firstName,
+      last_name: contact.lastName || '',
+      full_name: [contact.firstName, contact.lastName].filter(Boolean).join(' '),
+      email: contact.email,
+      phone: contact.phone || '',
+      organization: contact.organization || '',
+    };
+    return value.replace(/\{\{\s*(first_name|last_name|full_name|email|phone|organization)\s*\}\}/gi,
+      (_match, field: string) => fields[field.toLowerCase()] ?? '');
+  }
+
+  private async sendSms(id: string) {
+    const [campaign] = await this.database.db
+      .update(campaigns)
+      .set({ status: 'Sending', lastError: null, updatedAt: new Date() })
+      .where(
+        and(
+          eq(campaigns.id, id),
+          inArray(campaigns.status, [
+            'Draft',
+            'Approved',
+            'Failed',
+            'Sent with failures',
+          ]),
+        ),
+      )
+      .returning();
+    if (!campaign) {
+      const current = await this.get(id);
+      throw new ConflictException(
+        `SMS campaign cannot be sent while it is ${current.status}`,
+      );
+    }
+
+    const senderId = campaign.subject || process.env.TERMII_SENDER_ID?.trim() || '';
+    if (!/^[A-Za-z0-9]{3,11}$/.test(senderId)) {
+      await this.markSmsFailed(id, 'Enter an approved 3 to 11 character sender ID.');
+      throw new BadRequestException(
+        'Enter an approved 3 to 11 character sender ID before sending.',
+      );
+    }
+    let message = '';
+    try {
+      const blocks = JSON.parse(campaign.blocks) as { type: string; content?: string }[];
+      message = blocks
+        .filter((block) => block.type === 'text')
+        .map((block) => block.content || '')
+        .join('\n');
+    } catch {
+      await this.markSmsFailed(id, 'SMS campaign content is invalid.');
+      throw new BadRequestException('SMS campaign content is invalid.');
+    }
+    if (!message.trim()) {
+      await this.markSmsFailed(id, 'SMS campaign message is empty.');
+      throw new BadRequestException('SMS campaign message is empty.');
+    }
+
+    let accepted = 0;
+    let failed = 0;
+    const errors: string[] = [];
+    try {
+      const recipients = await this.resolveRecipients(
+        campaign.includedAudiences,
+        campaign.excludedAudiences,
+        campaign.excludedContacts,
+        'SMS',
+      );
+      const phoneOwners = new Map<string, string>();
+      for (const contact of recipients) {
+        const phone = this.termii.normalizePhone(contact.phone);
+        if (phone) phoneOwners.set(phone, contact.id);
+      }
+      const phones = [...phoneOwners.keys()];
+      if (!phones.length)
+        throw new BadRequestException(
+          'No SMS-subscribed contacts with valid phone numbers match this audience.',
+        );
+
+      for (let index = 0; index < phones.length; index += 100) {
+        const batch = phones.slice(index, index + 100);
+        try {
+          await this.termii.sendBulk(batch, message, senderId);
+          accepted += batch.length;
+        } catch (error) {
+          failed += phones.length - index;
+          errors.push(
+            error instanceof Error ? error.message : 'Termii could not send this SMS batch',
+          );
+          break;
+        }
+      }
+      const skipped = recipients.length - phones.length;
+      if (skipped) {
+        failed += skipped;
+        errors.push(`${skipped} subscribed contact(s) have missing or invalid phone numbers.`);
+      }
+      const status: CampaignStatus = failed
+        ? accepted
+          ? 'Sent with failures'
+          : 'Failed'
+        : 'Sent';
+      const lastError = errors.length ? errors.join(' ').slice(0, 1000) : null;
+      const [updated] = await this.database.db
+        .update(campaigns)
+        .set({
+          status,
+          recipientCount: accepted + failed,
+          deliveredCount: accepted,
+          failedCount: failed,
+          lastError,
+          sentAt: accepted ? new Date() : null,
+          updatedAt: new Date(),
+        })
+        .where(eq(campaigns.id, id))
+        .returning();
+      return {
+        ...updated,
+        delivery: { total: accepted + failed, sent: accepted, failed, errors },
+      };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'SMS campaign delivery failed';
+      await this.markSmsFailed(id, message);
+      throw error;
+    }
+  }
+
+  private async markSmsFailed(id: string, message: string) {
+    await this.database.db
+      .update(campaigns)
+      .set({ status: 'Failed', lastError: message.slice(0, 1000), updatedAt: new Date() })
+      .where(eq(campaigns.id, id));
   }
 
   async content(id: string) {
@@ -397,6 +770,7 @@ export class CampaignsService {
     includedNames: string[],
     excludedNames: string[],
     excludedEmails: string[],
+    channel: 'Email' | 'SMS' | 'WhatsApp' = 'Email',
   ) {
     if (!includedNames.length)
       throw new BadRequestException(
@@ -425,14 +799,18 @@ export class CampaignsService {
     for (const audience of allAudiences.filter((item) =>
       excludedAudienceIds.includes(item.id),
     )) {
-      for (const contact of await this.contactsForAudience(audience))
+      for (const contact of await this.contactsForAudience(audience, channel))
         excluded.add(contact.email.toLocaleLowerCase());
     }
     const recipients = new Map<string, typeof contacts.$inferSelect>();
     for (const audience of selected as (typeof audiences.$inferSelect)[]) {
-      for (const contact of await this.contactsForAudience(audience)) {
+      for (const contact of await this.contactsForAudience(audience, channel)) {
         if (
-          contact.emailConsent === 'Subscribed' &&
+          (channel === 'SMS'
+            ? contact.smsConsent === 'Subscribed'
+            : channel === 'WhatsApp'
+              ? contact.whatsappConsent === 'Subscribed'
+              : contact.emailConsent === 'Subscribed') &&
           !excluded.has(contact.email.toLocaleLowerCase())
         )
           recipients.set(contact.id, contact);
@@ -441,7 +819,10 @@ export class CampaignsService {
     return [...recipients.values()];
   }
 
-  private async contactsForAudience(audience: typeof audiences.$inferSelect) {
+  private async contactsForAudience(
+    audience: typeof audiences.$inferSelect,
+    channel: 'Email' | 'SMS' | 'WhatsApp' = 'Email',
+  ) {
     if (audience.type !== 'dynamic') {
       const rows = await this.database.db
         .select({ contact: contacts })
@@ -467,7 +848,11 @@ export class CampaignsService {
               : rule.field === 'Location'
                 ? [contact.location ?? '']
                 : rule.field === 'Status' || rule.field === 'Consent status'
-                  ? [contact.emailConsent]
+                  ? [channel === 'SMS'
+                    ? contact.smsConsent
+                    : channel === 'WhatsApp'
+                      ? contact.whatsappConsent
+                      : contact.emailConsent]
                   : rule.field === 'Interest'
                     ? contact.interests
                     : contact.tags;
@@ -485,16 +870,21 @@ export class CampaignsService {
 
   private validate(input: Record<string, unknown>) {
     const name = this.string(input.name, 'Campaign name', 120);
-    const subject = this.string(input.subject, 'Email subject', 200);
-    if (/[\r\n]/.test(subject))
+    const channel = input.channel === 'SMS' ? 'SMS' : input.channel === 'WhatsApp' ? 'WhatsApp' : 'Email';
+    const subject = channel === 'SMS'
+      ? (typeof input.subject === 'string' && input.subject.trim()) || process.env.TERMII_SENDER_ID?.trim() || ''
+      : channel === 'WhatsApp'
+        ? ''
+        : this.string(input.subject, 'Email subject', 200);
+    if (channel === 'Email' && /[\r\n]/.test(subject))
       throw new BadRequestException('Email subject must fit on a single line');
     if (
       !Array.isArray(input.blocks) ||
-      !input.blocks.length ||
+      (channel !== 'WhatsApp' && !input.blocks.length) ||
       input.blocks.length > 100
     )
       throw new BadRequestException(
-        'Add between 1 and 100 email content blocks',
+        'Add between 1 and 100 campaign content blocks',
       );
     const blocks = input.blocks.map((value) => {
       if (!value || typeof value !== 'object')
@@ -506,6 +896,8 @@ export class CampaignsService {
         )
       )
         throw new BadRequestException('Unsupported email content block');
+      if (channel !== 'Email' && block.type !== 'text')
+        throw new BadRequestException(`${channel} campaigns support text content only`);
       const content = typeof block.content === 'string' ? block.content : '';
       const url = typeof block.url === 'string' ? block.url : undefined;
       if (content.length > 10000 || (url && url.length > 2048))
@@ -547,15 +939,49 @@ export class CampaignsService {
       throw new BadRequestException(
         'Select at least one audience before scheduling',
       );
+    if (channel === 'SMS' && !/^[A-Za-z0-9]{3,11}$/.test(subject))
+      throw new BadRequestException('SMS sender ID must be 3 to 11 letters or numbers.');
+    const message = channel === 'SMS'
+      ? blocks.filter((block) => block.type === 'text').map((block) => block.content).join('\n')
+      : '';
+    if (channel === 'SMS' && !message.trim())
+      throw new BadRequestException('SMS message is required.');
+    if (channel === 'SMS' && /\{\{\s*[^}]+\s*\}\}/.test(message))
+      throw new BadRequestException(
+        'Termii bulk sends use one shared message. Remove personalization merge fields.',
+      );
+    const whatsappTemplate =
+      typeof input.whatsappTemplate === 'string' ? input.whatsappTemplate.trim() : '';
+    const whatsappSender =
+      typeof input.whatsappSender === 'string' ? input.whatsappSender.trim() : '';
+    let whatsappMergeInfo = '{}';
+    if (channel === 'WhatsApp') {
+      if (!whatsappTemplate || whatsappTemplate.length > 100)
+        throw new BadRequestException('Choose an approved Zoho CPaaS template key or alias.');
+      if (!/^\+\d{8,19}$/.test(whatsappSender))
+        throw new BadRequestException('WhatsApp sender number must use international format, such as +2348012345678.');
+      const value = input.whatsappMergeInfo ?? {};
+      if (!value || Array.isArray(value) || typeof value !== 'object' ||
+          Object.values(value as Record<string, unknown>).some((item) => typeof item !== 'string'))
+        throw new BadRequestException('WhatsApp template variables must be a JSON object of strings.');
+      whatsappMergeInfo = JSON.stringify(value);
+      if (typeof input.whatsappTemplateType === 'string' && input.whatsappTemplateType === 'Marketing')
+        throw new BadRequestException('Zoho CPaaS WhatsApp supports Utility and Authentication templates, not Marketing templates.');
+    }
+    if (channel !== 'Email' && input.scheduledAt)
+      throw new BadRequestException('Scheduling is not enabled for SMS or WhatsApp campaigns. Save the campaign as a draft.');
     return {
       name,
-      channel: 'Email',
+      channel,
       status,
       objective:
         typeof input.objective === 'string'
           ? input.objective.slice(0, 500)
           : '',
       subject,
+      whatsappTemplate: channel === 'WhatsApp' ? whatsappTemplate : null,
+      whatsappSender: channel === 'WhatsApp' ? whatsappSender : null,
+      whatsappMergeInfo,
       blocks: JSON.stringify(blocks),
       includedAudiences,
       excludedAudiences,
