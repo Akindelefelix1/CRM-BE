@@ -168,3 +168,25 @@ export const auditEvents = pgTable(
     index('audit_events_actor_type_idx').on(table.actorId, table.eventType),
   ],
 );
+
+export const workspaceSettings = pgTable('workspace_settings', {
+  ownerId: text('owner_id').primaryKey(),
+  organizationName: text('organization_name').notNull().default('Cephas People'),
+  timezone: text('timezone').notNull().default('Africa/Lagos'),
+  senderName: text('sender_name').notNull().default('Cephas People'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const privacyRequests = pgTable(
+  'privacy_requests',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    ownerId: text('owner_id').notNull(),
+    requestType: text('request_type').notNull(),
+    email: text('email').notNull(),
+    status: text('status').notNull().default('Received'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('privacy_requests_owner_created_idx').on(table.ownerId, table.createdAt)],
+);

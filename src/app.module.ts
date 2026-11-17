@@ -12,6 +12,7 @@ import { TemplatesModule } from './templates/templates.module.js';
 import { NeonAuthGuard } from './auth/neon-auth.guard.js';
 import { AnalyticsModule } from './analytics/analytics.module.js';
 import { AuditModule } from './audit/audit.module.js';
+import { SettingsModule } from './settings/settings.module.js';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { AuditModule } from './audit/audit.module.js';
     TemplatesModule,
     AnalyticsModule,
     AuditModule,
+    SettingsModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: NeonAuthGuard }],
