@@ -16,9 +16,9 @@ services:
       - key: CORS_ORIGIN
         sync: false
       - key: NEON_AUTH_JWKS_URL
-        sync: false
+        value: https://ep-solitary-rain-bdzyf7z9.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth/.well-known/jwks.json
       - key: NEON_AUTH_BASE_URL
-        sync: false
+        value: https://ep-solitary-rain-bdzyf7z9.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth
       - key: ZOHO_CAMPAIGNS_API_URL
         value: https://campaigns.zoho.com/api/v1.1
       - key: ZOHO_CAMPAIGNS_ACCOUNTS_URL

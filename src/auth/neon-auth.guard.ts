@@ -23,14 +23,18 @@ export class NeonAuthGuard implements CanActivate {
     ]);
     if (isPublic) return true;
 
-    const jwksUrl = process.env.NEON_AUTH_JWKS_URL?.trim();
     const authBaseUrl = process.env.NEON_AUTH_BASE_URL?.trim();
-    if (!jwksUrl || !authBaseUrl) {
+    if (!authBaseUrl) {
       throw new ServiceUnavailableException('API authentication is not configured');
     }
     let issuer: string;
+    let jwksUrl: string;
     try {
-      issuer = new URL(authBaseUrl).origin;
+      const authUrl = new URL(authBaseUrl);
+      issuer = authUrl.origin;
+      const configuredJwksUrl = process.env.NEON_AUTH_JWKS_URL?.trim();
+      jwksUrl = configuredJwksUrl || `${authBaseUrl.replace(/\/$/, '')}/.well-known/jwks.json`;
+      new URL(jwksUrl);
     } catch {
       throw new ServiceUnavailableException('Neon Auth base URL is invalid');
     }
