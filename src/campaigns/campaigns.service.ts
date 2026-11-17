@@ -63,6 +63,10 @@ export class CampaignsService {
     };
   }
 
+  testZohoConnection() {
+    return this.zoho.testConnection();
+  }
+
   async create(input: Record<string, unknown>) {
     const campaign = this.validate(input);
     const existing = await this.database.db.select({ name: campaigns.name }).from(campaigns);

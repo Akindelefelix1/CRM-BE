@@ -169,13 +169,21 @@ export class ZohoCampaignsService {
   }
 
   async testConnection() {
-    return this.accessToken();
+    // A read-only call verifies both the OAuth credentials and that the token
+    // includes the campaign read scope. Never return the access token to callers.
+    await this.call(
+      'recentcampaigns',
+      { resfmt: 'JSON', range: '1', status: 'all' },
+      'ZohoCampaigns.campaign.READ',
+      'GET',
+    );
+    return { connected: true, provider: 'Zoho Campaigns' };
   }
 
   private async call(
     path: string,
     params: Record<string, string>,
-    _requiredScope: string,
+    requiredScope: string,
     method: 'GET' | 'POST' = 'POST',
   ) {
     const base = (
@@ -231,10 +239,13 @@ export class ZohoCampaignsService {
       status === 'failure' ||
       status === 'error'
     ) {
-      const message =
+      let message =
         typeof nested.message === 'string'
           ? nested.message
           : `Zoho Campaigns returned HTTP ${response.status}`;
+      if (/invalid_scope/i.test(message)) {
+        message = `The Zoho OAuth grant is missing ${requiredScope}. Re-authorize the Self Client with the required Campaigns scopes.`;
+      }
       throw new BadGatewayException(`Zoho Campaigns: ${message}`);
     }
     return nested;
