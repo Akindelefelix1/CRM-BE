@@ -288,10 +288,16 @@ export class ZohoCampaignsService {
       expires_in?: number;
       error?: string;
     };
-    if (!response.ok || !result.access_token)
+    if (!response.ok || !result.access_token) {
+      if (result.error === 'invalid_code') {
+        throw new ServiceUnavailableException(
+          'Zoho rejected ZOHO_CAMPAIGNS_REFRESH_TOKEN. Set it to the refresh_token returned by the authorization-code exchange, not the generated code or access token. Also confirm the client credentials and Zoho Accounts URL belong to the same data center.',
+        );
+      }
       throw new ServiceUnavailableException(
         `Zoho Campaigns OAuth token refresh failed${result.error ? `: ${result.error}` : ''}`,
       );
+    }
     this.cachedToken = result.access_token;
     this.tokenExpiresAt =
       Date.now() + (Number(result.expires_in) || 3600) * 1000;
