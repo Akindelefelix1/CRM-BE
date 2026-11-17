@@ -24,6 +24,7 @@ export class ZohoCampaignsService {
         'No eligible recipients were found for this campaign',
       );
     let listKey = existingKey ?? '';
+    const topicId = process.env.ZOHO_CAMPAIGNS_TOPIC_ID?.trim();
     // addlistandcontacts creates the list and subscribes the initial batch in
     // one request. Do not submit those first addresses again below: duplicate
     // subscribe requests can be rejected by Zoho and prevent later batches
@@ -56,8 +57,11 @@ export class ZohoCampaignsService {
       await onCreated?.(listKey);
       nextRecipientIndex = Math.min(recipients.length, 10);
     }
+    // In accounts using Zoho's topic management, every campaign recipient must
+    // be subscribed to the campaign topic. addlistandcontacts has no topic_id
+    // parameter, so subscribe the initial batch again through listsubscribe.
     for (
-      let index = nextRecipientIndex;
+      let index = topicId ? 0 : nextRecipientIndex;
       index < recipients.length;
       index += 10
     ) {
@@ -75,6 +79,7 @@ export class ZohoCampaignsService {
                 'Contact Email': contact.email,
               }),
               source: 'Cephas CRM',
+              ...(topicId ? { topic_id: topicId } : {}),
             },
             'ZohoCampaigns.contact.UPDATE',
           ),
@@ -118,7 +123,7 @@ export class ZohoCampaignsService {
     const campaignKey = this.value(response, 'campaignKey', 'campaignkey');
     if (!campaignKey)
       throw new BadGatewayException(
-        'Zoho Campaigns did not return a campaign key',
+        'Zoho Campaigns did not return a campaign key. Confirm that ZOHO_CAMPAIGNS_TOPIC_ID is set to a topic in this account if topic management is enabled, and that the public campaign content URL is reachable.',
       );
     return campaignKey;
   }
@@ -223,7 +228,28 @@ export class ZohoCampaignsService {
     try {
       payload = JSON.parse(raw) as Record<string, unknown>;
     } catch {
-      /* Zoho errors are converted to a safe message below. */
+      // Some Campaigns v1.1 responses still use XML despite resfmt=JSON.
+      // Parse known response fields so HTTP 200 provider errors are actionable.
+      const xmlValue = (name: string) => {
+        const match = raw.match(new RegExp(`<${name}[^>]*>([\\s\\S]*?)</${name}>`, 'i'));
+        return match?.[1]
+          ?.replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/&apos;/g, "'")
+          .replace(/&amp;/g, '&')
+          .trim();
+      };
+      const code = xmlValue('code');
+      const status = xmlValue('status');
+      const message = xmlValue('message');
+      const campaignKey = xmlValue('campaignKey') || xmlValue('campaignkey');
+      payload = {
+        ...(code ? { code } : {}),
+        ...(status ? { status } : {}),
+        ...(message ? { message } : {}),
+        ...(campaignKey ? { campaignKey } : {}),
+      };
     }
     const nested =
       payload.response && typeof payload.response === 'object'
@@ -246,7 +272,9 @@ export class ZohoCampaignsService {
         ? nested.message.trim()
         : code
           ? `Zoho Campaigns returned error code ${code} (HTTP ${response.status})`
-          : `Zoho Campaigns returned HTTP ${response.status}`;
+          : response.status === 200 && /createCampaign/i.test(path)
+            ? 'Zoho accepted the request but did not return a successful campaign response. Check the configured topic ID (required on accounts with updated topic management), sender approval, and campaign content URL.'
+            : `Zoho Campaigns returned HTTP ${response.status}`;
       if (/invalid_scope/i.test(message)) {
         message = `The Zoho OAuth grant is missing ${requiredScope}. Re-authorize the Self Client with the required Campaigns scopes.`;
       }
