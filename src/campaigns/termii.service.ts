@@ -44,10 +44,16 @@ export class TermiiService {
       throw new BadGatewayException('Could not reach the Termii SMS service');
     }
 
-    const body = (await response.json().catch(() => ({}))) as TermiiResult;
-    if (!response.ok || (body.code && body.code.toLowerCase() !== 'ok')) {
+    const body = (await response.json().catch(() => null)) as TermiiResult | null;
+    if (
+      !response.ok ||
+      !body ||
+      typeof body.code !== 'string' ||
+      body.code.toLowerCase() !== 'ok' ||
+      !(typeof body.message_id === 'string' || typeof body.message_id === 'number')
+    ) {
       const detail =
-        typeof body.message === 'string' ? body.message : 'Termii rejected the SMS batch';
+        typeof body?.message === 'string' ? body.message : 'Termii rejected the SMS batch';
       throw new BadGatewayException(detail.slice(0, 500));
     }
     return body;

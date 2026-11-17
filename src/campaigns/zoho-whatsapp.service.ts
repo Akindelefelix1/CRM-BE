@@ -10,6 +10,8 @@ type ZohoEnvelope = {
     message?: string;
     message_id?: string;
     status?: string;
+    error_message?: { error?: { message?: string } };
+    error_msg?: string;
   };
   error?: { code?: string; message?: string };
 };
@@ -75,13 +77,12 @@ export class ZohoWhatsAppService {
   private async call(url: string, apiKey: string, init?: RequestInit) {
     let response: Response;
     try {
+      const headers = new Headers(init?.headers);
+      headers.set('Authorization', `Zoho-enczapikey ${apiKey}`);
+      headers.set('Accept', 'application/json');
       response = await fetch(url, {
         ...init,
-        headers: {
-          Authorization: `Zoho-enczapikey ${apiKey}`,
-          Accept: 'application/json',
-          ...init?.headers,
-        },
+        headers,
         signal: AbortSignal.timeout(20_000),
       });
     } catch {

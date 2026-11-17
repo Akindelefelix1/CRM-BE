@@ -65,12 +65,8 @@ export class CampaignsService {
 
   async create(input: Record<string, unknown>) {
     const campaign = this.validate(input);
-    const [existing] = await this.database.db
-      .select({ id: campaigns.id })
-      .from(campaigns)
-      .where(eq(campaigns.name, campaign.name))
-      .limit(1);
-    if (existing)
+    const existing = await this.database.db.select({ name: campaigns.name }).from(campaigns);
+    if (existing.some((row) => row.name.toLocaleLowerCase() === campaign.name.toLocaleLowerCase()))
       throw new ConflictException('A campaign with this name already exists');
     const [row] = await this.database.db
       .insert(campaigns)
@@ -224,14 +220,14 @@ export class CampaignsService {
 
     const sender = campaign.whatsappSender || process.env.ZOHO_WHATSAPP_FROM?.trim() || '';
     if (!/^\+\d{8,19}$/.test(sender)) {
-      await this.markSmsFailed(id, 'Set a WhatsApp sender number in international format.');
+      await this.markCampaignFailed(id, 'Set a WhatsApp sender number in international format.');
       throw new BadRequestException(
         'Set a WhatsApp sender number in international format (for example +2348012345678).',
       );
     }
     const template = campaign.whatsappTemplate?.trim();
     if (!template) {
-      await this.markSmsFailed(id, 'Select an approved Zoho CPaaS WhatsApp template.');
+      await this.markCampaignFailed(id, 'Select an approved Zoho CPaaS WhatsApp template.');
       throw new BadRequestException('Select an approved Zoho CPaaS WhatsApp template.');
     }
     let mergeInfo: Record<string, string>;
@@ -241,7 +237,7 @@ export class CampaignsService {
           Object.values(mergeInfo).some((value) => typeof value !== 'string'))
         throw new Error('invalid');
     } catch {
-      await this.markSmsFailed(id, 'WhatsApp template variable mapping is invalid.');
+      await this.markCampaignFailed(id, 'WhatsApp template variable mapping is invalid.');
       throw new BadRequestException('WhatsApp template variable mapping must be a JSON object of strings.');
     }
 
@@ -261,45 +257,71 @@ export class CampaignsService {
         .from(campaignDeliveries)
         .where(eq(campaignDeliveries.campaignId, id));
       const deliveryByContact = new Map(previous.map((item) => [item.contactId, item]));
+      const acceptedStatuses = ['queued', 'sent', 'delivered', 'read'];
+      const acceptedIds = new Set(previous
+        .filter((item) => acceptedStatuses.includes(item.status))
+        .map((item) => item.contactId));
+      const seenPhones = new Set(recipients
+        .filter((contact) => acceptedIds.has(contact.id))
+        .map((contact) => this.normalizeWhatsAppPhone(contact.phone))
+        .filter((phone): phone is string => Boolean(phone)));
+      const sendable: { contact: (typeof recipients)[number]; phone: string }[] = [];
+      let invalidPhones = 0;
+      let duplicatePhones = 0;
       let accepted = 0;
-      let failed = 0;
+      for (const contact of recipients) {
+        const prior = deliveryByContact.get(contact.id);
+        if (prior && acceptedStatuses.includes(prior.status)) {
+          accepted++;
+          continue;
+        }
+        const phone = this.normalizeWhatsAppPhone(contact.phone);
+        if (!phone) {
+          invalidPhones++;
+          await this.saveCampaignDelivery(id, contact.id, null, 'failed', 'Missing or invalid phone number');
+        } else if (seenPhones.has(phone)) {
+          duplicatePhones++;
+          await this.saveCampaignDelivery(id, contact.id, null, 'duplicate', 'Same phone number is already included once');
+        } else {
+          seenPhones.add(phone);
+          sendable.push({ contact, phone });
+        }
+      }
+      let failed = invalidPhones;
       const errors: string[] = [];
-      for (let start = 0; start < recipients.length; start += 10) {
-        const batch = recipients.slice(start, start + 10);
+      if (invalidPhones) errors.push(`${invalidPhones} contact(s) have missing or invalid phone numbers.`);
+      if (duplicatePhones) errors.push(`${duplicatePhones} duplicate phone number(s) were sent once.`);
+      for (let start = 0; start < sendable.length; start += 10) {
+        const batch = sendable.slice(start, start + 10);
         const outcomes = await Promise.all(batch.map(async (contact) => {
-          const prior = deliveryByContact.get(contact.id);
+          const prior = deliveryByContact.get(contact.contact.id);
           if (prior && ['queued', 'sent', 'delivered', 'read'].includes(prior.status))
             return { accepted: true as const };
-          const phone = this.normalizeWhatsAppPhone(contact.phone);
-          if (!phone) {
-            await this.saveWhatsAppDelivery(id, contact.id, null, 'failed', 'Missing or invalid phone number');
-            return { accepted: false as const, detail: 'Missing or invalid phone number', email: contact.email };
-          }
           try {
             const resolvedMergeInfo = Object.fromEntries(
               Object.entries(mergeInfo).map(([key, value]) => [
                 key,
-                this.resolveWhatsAppVariable(value, contact),
+                this.resolveWhatsAppVariable(value, contact.contact),
               ]),
             );
             const response = await this.zohoWhatsApp.send({
               from: sender,
-              to: phone,
+              to: contact.phone,
               template,
               mergeInfo: resolvedMergeInfo,
-              clientReference: `crm-${id}-${contact.id}`.slice(0, 100),
+              clientReference: `crm-${id}-${contact.contact.id}`.slice(0, 100),
             });
-            await this.saveWhatsAppDelivery(id, contact.id, response.message_id!, 'queued', null);
-            deliveryByContact.set(contact.id, {
-              id: '', campaignId: id, contactId: contact.id,
+            await this.saveCampaignDelivery(id, contact.contact.id, response.message_id!, 'queued', null);
+            deliveryByContact.set(contact.contact.id, {
+              id: '', campaignId: id, contactId: contact.contact.id,
               providerMessageId: response.message_id!, status: 'queued', error: null,
               createdAt: new Date(), updatedAt: new Date(),
             });
             return { accepted: true as const };
           } catch (error) {
             const detail = error instanceof Error ? error.message : 'Zoho CPaaS rejected the WhatsApp message';
-            await this.saveWhatsAppDelivery(id, contact.id, null, 'failed', detail);
-            return { accepted: false as const, detail, email: contact.email };
+            await this.saveCampaignDelivery(id, contact.contact.id, null, 'failed', detail);
+            return { accepted: false as const, detail, email: contact.contact.email };
           }
         }));
         for (const outcome of outcomes) {
@@ -315,7 +337,7 @@ export class CampaignsService {
           ? 'Sent with failures'
           : 'Failed'
         : 'Sent';
-      const lastError = errors.length ? errors.join(' ').slice(0, 1000) : null;
+      const lastError = failed ? errors.join(' ').slice(0, 1000) : null;
       const [updated] = await this.database.db
         .update(campaigns)
         .set({
@@ -335,7 +357,7 @@ export class CampaignsService {
       };
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'WhatsApp campaign delivery failed';
-      await this.markSmsFailed(id, detail);
+      await this.markCampaignFailed(id, detail);
       throw error;
     }
   }
@@ -354,11 +376,19 @@ export class CampaignsService {
       try {
         const response = await this.zohoWhatsApp.getMessage(row.providerMessageId);
         const status = response.data?.status;
-        if (status && ['queued', 'sent', 'delivered', 'read', 'undelivered', 'failed', 'process_failed'].includes(status))
+        if (status && ['queued', 'sent', 'delivered', 'read', 'undelivered', 'failed', 'process_failed'].includes(status)) {
+          let deliveryError = response.data?.error_message?.error?.message ?? null;
+          if (!deliveryError && response.data?.error_msg) {
+            try {
+              const envelope = JSON.parse(response.data.error_msg) as { error?: { message?: string } };
+              deliveryError = envelope.error?.message ?? null;
+            } catch { /* preserve the provider status even if its optional error text is malformed */ }
+          }
           await this.database.db
             .update(campaignDeliveries)
-            .set({ status, updatedAt: new Date() })
+            .set({ status, error: deliveryError, updatedAt: new Date() })
             .where(eq(campaignDeliveries.id, row.id));
+        }
       } catch (error) {
         errors.push(error instanceof Error ? error.message : 'Could not refresh a delivery status');
       }
@@ -375,14 +405,21 @@ export class CampaignsService {
         ? 'Sent with failures'
         : 'Failed'
       : 'Sent';
-    await this.database.db
+    const lastError = current
+      .filter((item) => ['undelivered', 'failed', 'process_failed'].includes(item.status))
+      .map((item) => item.error)
+      .filter((error): error is string => Boolean(error))
+      .join(' ')
+      .slice(0, 1000) || null;
+    const [updated] = await this.database.db
       .update(campaigns)
-      .set({ status: deliveryStatus, deliveredCount: delivered, failedCount: failed, updatedAt: new Date() })
-      .where(eq(campaigns.id, id));
-    return { total: current.length, delivered, failed, pending, errors };
+      .set({ status: deliveryStatus, deliveredCount: delivered, failedCount: failed, lastError, updatedAt: new Date() })
+      .where(eq(campaigns.id, id))
+      .returning({ status: campaigns.status });
+    return { total: current.length, delivered, failed, pending, errors, status: updated.status, lastError };
   }
 
-  private async saveWhatsAppDelivery(
+  private async saveCampaignDelivery(
     campaignId: string,
     contactId: string,
     providerMessageId: string | null,
@@ -450,7 +487,7 @@ export class CampaignsService {
 
     const senderId = campaign.subject || process.env.TERMII_SENDER_ID?.trim() || '';
     if (!/^[A-Za-z0-9]{3,11}$/.test(senderId)) {
-      await this.markSmsFailed(id, 'Enter an approved 3 to 11 character sender ID.');
+      await this.markCampaignFailed(id, 'Enter an approved 3 to 11 character sender ID.');
       throw new BadRequestException(
         'Enter an approved 3 to 11 character sender ID before sending.',
       );
@@ -463,11 +500,11 @@ export class CampaignsService {
         .map((block) => block.content || '')
         .join('\n');
     } catch {
-      await this.markSmsFailed(id, 'SMS campaign content is invalid.');
+      await this.markCampaignFailed(id, 'SMS campaign content is invalid.');
       throw new BadRequestException('SMS campaign content is invalid.');
     }
     if (!message.trim()) {
-      await this.markSmsFailed(id, 'SMS campaign message is empty.');
+      await this.markCampaignFailed(id, 'SMS campaign message is empty.');
       throw new BadRequestException('SMS campaign message is empty.');
     }
 
@@ -481,46 +518,83 @@ export class CampaignsService {
         campaign.excludedContacts,
         'SMS',
       );
-      const phoneOwners = new Map<string, string>();
+      const priorDeliveries = await this.database.db
+        .select()
+        .from(campaignDeliveries)
+        .where(eq(campaignDeliveries.campaignId, id));
+      const acceptedStatuses = ['queued', 'sent', 'delivered', 'read'];
+      const acceptedContactIds = new Set(
+        priorDeliveries
+          .filter((delivery) => acceptedStatuses.includes(delivery.status))
+          .map((delivery) => delivery.contactId),
+      );
+      const acceptedPhones = new Set(
+        recipients
+          .filter((contact) => acceptedContactIds.has(contact.id))
+          .map((contact) => this.termii.normalizePhone(contact.phone))
+          .filter((phone): phone is string => Boolean(phone)),
+      );
+      const phoneOwners = new Map<string, (typeof recipients)[number]>();
+      const seenPhones = new Set(acceptedPhones);
+      let invalidPhones = 0;
+      let duplicatePhones = 0;
       for (const contact of recipients) {
         const phone = this.termii.normalizePhone(contact.phone);
-        if (phone) phoneOwners.set(phone, contact.id);
+        if (acceptedContactIds.has(contact.id)) {
+          accepted++;
+          continue;
+        }
+        if (!phone) {
+          invalidPhones++;
+          await this.saveCampaignDelivery(id, contact.id, null, 'failed', 'Missing or invalid phone number');
+        } else if (seenPhones.has(phone)) {
+          duplicatePhones++;
+          await this.saveCampaignDelivery(id, contact.id, null, 'duplicate', 'Same phone number is already included once');
+        } else {
+          seenPhones.add(phone);
+          phoneOwners.set(phone, contact);
+        }
       }
-      const phones = [...phoneOwners.keys()];
-      if (!phones.length)
+      if (!recipients.length)
         throw new BadRequestException(
-          'No SMS-subscribed contacts with valid phone numbers match this audience.',
+          'No SMS-subscribed contacts match the selected audiences and exclusions.',
         );
 
-      for (let index = 0; index < phones.length; index += 100) {
-        const batch = phones.slice(index, index + 100);
+      const pending = [...phoneOwners.entries()];
+      for (let index = 0; index < pending.length; index += 100) {
+        const batch = pending.slice(index, index + 100);
         try {
-          await this.termii.sendBulk(batch, message, senderId);
+          await this.termii.sendBulk(batch.map(([phone]) => phone), message, senderId);
           accepted += batch.length;
+          await Promise.all(batch.map(([, contact]) =>
+            this.saveCampaignDelivery(id, contact.id, null, 'sent', null),
+          ));
         } catch (error) {
-          failed += phones.length - index;
-          errors.push(
-            error instanceof Error ? error.message : 'Termii could not send this SMS batch',
-          );
+          failed += batch.length;
+          const detail = error instanceof Error ? error.message : 'Termii could not send this SMS batch';
+          errors.push(detail);
+          await Promise.all(batch.map(([, contact]) =>
+            this.saveCampaignDelivery(id, contact.id, null, 'failed', detail),
+          ));
           break;
         }
       }
-      const skipped = recipients.length - phones.length;
-      if (skipped) {
-        failed += skipped;
-        errors.push(`${skipped} subscribed contact(s) have missing or invalid phone numbers.`);
+      if (invalidPhones) {
+        failed += invalidPhones;
+        errors.push(`${invalidPhones} subscribed contact(s) have missing or invalid phone numbers.`);
       }
+      if (duplicatePhones) errors.push(`${duplicatePhones} duplicate phone number(s) were sent once.`);
       const status: CampaignStatus = failed
         ? accepted
           ? 'Sent with failures'
           : 'Failed'
         : 'Sent';
-      const lastError = errors.length ? errors.join(' ').slice(0, 1000) : null;
+      const lastError = failed ? errors.join(' ').slice(0, 1000) : null;
       const [updated] = await this.database.db
         .update(campaigns)
         .set({
           status,
-          recipientCount: accepted + failed,
+          recipientCount: recipients.length,
           deliveredCount: accepted,
           failedCount: failed,
           lastError,
@@ -531,17 +605,17 @@ export class CampaignsService {
         .returning();
       return {
         ...updated,
-        delivery: { total: accepted + failed, sent: accepted, failed, errors },
+        delivery: { total: recipients.length, sent: accepted, failed, errors },
       };
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'SMS campaign delivery failed';
-      await this.markSmsFailed(id, message);
+      await this.markCampaignFailed(id, message);
       throw error;
     }
   }
 
-  private async markSmsFailed(id: string, message: string) {
+  private async markCampaignFailed(id: string, message: string) {
     await this.database.db
       .update(campaigns)
       .set({ status: 'Failed', lastError: message.slice(0, 1000), updatedAt: new Date() })
@@ -870,6 +944,10 @@ export class CampaignsService {
 
   private validate(input: Record<string, unknown>) {
     const name = this.string(input.name, 'Campaign name', 120);
+    if (input.channel != null && typeof input.channel !== 'string')
+      throw new BadRequestException('Campaign channel must be Email, SMS, or WhatsApp.');
+    if (typeof input.channel === 'string' && !['Email', 'SMS', 'WhatsApp'].includes(input.channel))
+      throw new BadRequestException('Campaign channel must be Email, SMS, or WhatsApp.');
     const channel = input.channel === 'SMS' ? 'SMS' : input.channel === 'WhatsApp' ? 'WhatsApp' : 'Email';
     const subject = channel === 'SMS'
       ? (typeof input.subject === 'string' && input.subject.trim()) || process.env.TERMII_SENDER_ID?.trim() || ''

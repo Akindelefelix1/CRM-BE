@@ -10,16 +10,18 @@ async function bootstrap() {
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
-  // Allow the Vite dev server to call this API during local development while
-  // keeping production access limited to explicitly configured app origins.
+  if (process.env.NODE_ENV === 'production' && configuredOrigins.length === 0) {
+    throw new Error('CORS_ORIGIN must contain the production frontend origin');
+  }
   const localDevelopmentOrigins = [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
   ];
+  const allowedOrigins = process.env.NODE_ENV === 'production'
+    ? configuredOrigins
+    : [...configuredOrigins, ...localDevelopmentOrigins];
   app.enableCors({
-    origin: configuredOrigins.length
-      ? [...new Set([...configuredOrigins, ...localDevelopmentOrigins])]
-      : true,
+    origin: [...new Set(allowedOrigins)],
   });
   app.setGlobalPrefix('api');
   await app.listen(process.env.PORT ?? 3000);

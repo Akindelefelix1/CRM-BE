@@ -28,7 +28,7 @@ Campaign drafts, audiences, consent checks, and schedules are stored in Neon. Ma
 
 ## Bulk SMS
 
-SMS campaigns are saved in Neon and sent through Termii's bulk messaging endpoint in batches of up to 100 numbers. Configure `TERMII_API_KEY`, `TERMII_BASE_URL`, `TERMII_SENDER_ID`, `TERMII_COUNTRY_CODE` (defaults to `234`), and `TERMII_CHANNEL` (defaults to the promotional `generic` route) in the API environment. Register and activate the sender ID in Termii first. The CRM sends only to contacts with SMS consent set to `Subscribed`, resolves audience exclusions, normalizes Nigerian local numbers to international format, and records provider-accepted and failed counts. Delivery receipts are not configured, so accepted counts are not handset delivery confirmation. Scheduled SMS is not enabled: Termii's campaign scheduler requires a Termii phonebook, while this CRM resolves contacts from its own audience database.
+SMS campaigns are saved in Neon and sent through Termii's bulk messaging endpoint in batches of up to 100 numbers. Configure `TERMII_API_KEY`, the account-specific `TERMII_BASE_URL` from the Termii dashboard, `TERMII_SENDER_ID`, `TERMII_COUNTRY_CODE` (defaults to `234`), and `TERMII_CHANNEL` (defaults to the promotional `generic` route) in the API environment. Register and activate the sender ID in Termii first. The CRM sends only to contacts with SMS consent set to `Subscribed`, resolves audience exclusions, normalizes Nigerian local numbers to international format, removes duplicate phone numbers, and records provider-accepted and failed counts per contact so retries do not repeat accepted sends. Delivery receipts are not configured, so accepted counts are not handset delivery confirmation. Scheduled SMS is not enabled: Termii's campaign scheduler requires a Termii phonebook, while this CRM resolves contacts from its own audience database.
 
 ## WhatsApp campaigns
 
@@ -46,7 +46,8 @@ WhatsApp messages are sent individually through Zoho CPaaS using an approved tem
 - `GET/POST /api/campaigns`, `PATCH /api/campaigns/:id`, and campaign approval, send, schedule, pause, cancel, and public content endpoints
 - `GET /api/campaigns/sms/provider-status` returns non-secret Termii configuration status
 - `GET /api/campaigns/whatsapp/provider-status` returns non-secret Zoho CPaaS configuration status
-- `GET /api/campaigns/:id/whatsapp-delivery` refreshes message states from Zoho CPaaS
+- `POST /api/campaigns/:id/whatsapp-delivery` refreshes message states from Zoho CPaaS
+- `GET/POST /api/templates`, `PATCH/DELETE /api/templates/:id`, and `POST /api/templates/:id/use`
 
 Files are stored privately under generated object keys. The API returns a five-minute signed download URL; original filenames are metadata only. File metadata lives in Postgres and is cleaned up if the object upload fails.
 

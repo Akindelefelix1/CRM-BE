@@ -15,6 +15,10 @@ services:
         value: "5"
       - key: CORS_ORIGIN
         sync: false
+      - key: NEON_AUTH_JWKS_URL
+        sync: false
+      - key: NEON_AUTH_BASE_URL
+        sync: false
       - key: ZOHO_CAMPAIGNS_API_URL
         value: https://campaigns.zoho.com/api/v1.1
       - key: ZOHO_CAMPAIGNS_ACCOUNTS_URL
@@ -34,7 +38,7 @@ services:
       - key: TERMII_API_KEY
         sync: false
       - key: TERMII_BASE_URL
-        value: https://api.ng.termii.com
+        sync: false
       - key: TERMII_SENDER_ID
         sync: false
       - key: TERMII_COUNTRY_CODE

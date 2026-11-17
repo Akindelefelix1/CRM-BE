@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, sql } from 'drizzle-orm';
 import { DatabaseService } from '../database/database.service.js';
 import { templates } from '../database/schema.js';
 
@@ -37,8 +37,9 @@ export class TemplatesService {
 
   async use(id: string) {
     const [row] = await this.database.db.update(templates)
-      .set({ useCount: (await this.require(id)).useCount + 1, updatedAt: new Date() })
-      .where(eq(templates.id, id)).returning();
+      .set({ useCount: sql`${templates.useCount} + 1`, updatedAt: new Date() })
+      .where(eq(templates.id, id)).returning({ id: templates.id, useCount: templates.useCount });
+    if (!row) throw new NotFoundException('Template not found');
     return { id: row.id, useCount: row.useCount };
   }
 
@@ -70,21 +71,38 @@ export class TemplatesService {
     const subject = typeof input.subject === 'string' ? input.subject.trim() : '';
     const body = typeof input.body === 'string' ? input.body.trim() : '';
     if (channel === 'Email' && !subject) throw new BadRequestException('Email templates need a subject line');
+    if (subject.length > 200) throw new BadRequestException('Email subjects may not exceed 200 characters');
     if (!body) throw new BadRequestException('Template message content is required');
+    if (body.length > 10000) throw new BadRequestException('Template message content may not exceed 10,000 characters');
     const emailBlocks = Array.isArray(input.emailBlocks) ? input.emailBlocks : [];
+    if (emailBlocks.length > 100 || emailBlocks.some((block) => {
+      if (!block || typeof block !== 'object' || Array.isArray(block)) return true;
+      const candidate = block as Record<string, unknown>;
+      return !['text', 'image', 'link', 'button', 'divider'].includes(String(candidate.type)) ||
+        typeof candidate.content !== 'string' || candidate.content.length > 10000;
+    })) throw new BadRequestException('Template email content blocks are invalid or too long');
     const attachments = Array.isArray(input.attachments)
       ? input.attachments.filter((item): item is string => typeof item === 'string')
       : [];
+    if (attachments.length > 50 || attachments.some((attachment) => attachment.length > 255))
+      throw new BadRequestException('Template attachments are invalid or exceed the 50 item limit');
     const mergeInfo = input.whatsappMergeInfo && typeof input.whatsappMergeInfo === 'object' && !Array.isArray(input.whatsappMergeInfo)
       ? input.whatsappMergeInfo
       : {};
+    const objective = typeof input.objective === 'string' ? input.objective.trim() : '';
+    const whatsappTemplate = typeof input.whatsappTemplate === 'string' ? input.whatsappTemplate.trim() : '';
+    const whatsappSender = typeof input.whatsappSender === 'string' ? input.whatsappSender.trim() : '';
+    if (objective.length > 500) throw new BadRequestException('Template purpose may not exceed 500 characters');
+    if (whatsappTemplate.length > 100) throw new BadRequestException('Zoho CPaaS template names may not exceed 100 characters');
+    if (whatsappSender.length > 20) throw new BadRequestException('WhatsApp sender numbers may not exceed 20 characters');
+    if (JSON.stringify(mergeInfo).length > 10000) throw new BadRequestException('WhatsApp variable mappings are too large');
     return {
       name, channel, subject, body,
       emailBlocks: JSON.stringify(emailBlocks),
       attachments,
-      objective: typeof input.objective === 'string' ? input.objective.trim() : '',
-      whatsappTemplate: typeof input.whatsappTemplate === 'string' ? input.whatsappTemplate.trim() || null : null,
-      whatsappSender: typeof input.whatsappSender === 'string' ? input.whatsappSender.trim() || null : null,
+      objective,
+      whatsappTemplate: whatsappTemplate || null,
+      whatsappSender: whatsappSender || null,
       whatsappMergeInfo: JSON.stringify(mergeInfo),
     };
   }

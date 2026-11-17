@@ -8,7 +8,7 @@ export class CampaignsController {
   @Get() list() { return this.campaigns.list(); }
   @Get('sms/provider-status') smsProviderStatus() { return this.campaigns.smsProviderStatus(); }
   @Get('whatsapp/provider-status') whatsappProviderStatus() { return this.campaigns.whatsappProviderStatus(); }
-  @Get(':id/whatsapp-delivery') refreshWhatsAppDelivery(@Param('id') id: string) { return this.campaigns.refreshWhatsAppDelivery(id); }
+  @Post(':id/whatsapp-delivery') refreshWhatsAppDelivery(@Param('id') id: string) { return this.campaigns.refreshWhatsAppDelivery(id); }
   @Post('test') sendTest(@Body() body: Record<string, unknown>) { return this.campaigns.sendTest(body); }
   @Get(':id/content') @Header('Content-Type', 'text/html; charset=utf-8') content(@Param('id') id: string) { return this.campaigns.content(id); }
   @Post() create(@Body() body: Record<string, unknown>) { return this.campaigns.create(body); }

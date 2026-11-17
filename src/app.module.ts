@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller.js';
 import { DatabaseModule } from './database/database.module.js';
@@ -8,6 +9,7 @@ import { FilesModule } from './files/files.module.js';
 import { CategoriesModule } from './categories/categories.module.js';
 import { CampaignsModule } from './campaigns/campaigns.module.js';
 import { TemplatesModule } from './templates/templates.module.js';
+import { NeonAuthGuard } from './auth/neon-auth.guard.js';
 
 @Module({
   imports: [
@@ -21,5 +23,6 @@ import { TemplatesModule } from './templates/templates.module.js';
     TemplatesModule,
   ],
   controllers: [AppController],
+  providers: [{ provide: APP_GUARD, useClass: NeonAuthGuard }],
 })
 export class AppModule {}
