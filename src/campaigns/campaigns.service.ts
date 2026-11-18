@@ -587,6 +587,15 @@ export class CampaignsService {
           await Promise.all(batch.map(([, contact]) =>
             this.saveCampaignDelivery(id, contact.id, null, 'failed', detail),
           ));
+          const unattempted = pending.slice(index + batch.length);
+          if (unattempted.length) {
+            const notAttemptedDetail = `Not attempted because an earlier Termii batch failed: ${detail}`;
+            failed += unattempted.length;
+            errors.push(`${unattempted.length} additional recipient(s) were not attempted after the Termii error.`);
+            await Promise.all(unattempted.map(([, contact]) =>
+              this.saveCampaignDelivery(id, contact.id, null, 'failed', notAttemptedDetail),
+            ));
+          }
           break;
         }
       }

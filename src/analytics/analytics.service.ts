@@ -43,7 +43,8 @@ export class AnalyticsService {
     for (const row of deliveryRows) {
       const counts = deliveryByCampaign.get(row.campaignId) ?? { delivered: 0, failed: 0 };
       if (['delivered', 'read'].includes(row.status.toLowerCase())) counts.delivered += row.total;
-      if (row.status.toLowerCase() === 'failed') counts.failed += row.total;
+      if (['failed', 'undelivered', 'process_failed'].includes(row.status.toLowerCase()))
+        counts.failed += row.total;
       deliveryByCampaign.set(row.campaignId, counts);
     }
 
@@ -67,7 +68,10 @@ export class AnalyticsService {
       if (!point) continue;
       point.campaignsSent += 1;
       point.recipients += row.recipientCount;
-      point.delivered += row.channel === 'WhatsApp' ? (deliveryByCampaign.get(row.id)?.delivered ?? row.deliveredCount) : 0;
+      // A provider acceptance is not a confirmed delivery. If an older or
+      // incomplete record has no delivery rows, report zero confirmed rather
+      // than falling back to the provider-accepted count.
+      point.delivered += row.channel === 'WhatsApp' ? (deliveryByCampaign.get(row.id)?.delivered ?? 0) : 0;
       point.failed += row.channel === 'WhatsApp' ? (deliveryByCampaign.get(row.id)?.failed ?? row.failedCount) : row.failedCount;
     }
 
@@ -75,7 +79,7 @@ export class AnalyticsService {
       const rows = sent.filter((row) => row.channel.toLowerCase() === channel.toLowerCase());
       const tracked = channel === 'WhatsApp';
       const accepted = channel === 'SMS' ? rows.reduce((sum, row) => sum + row.deliveredCount, 0) : 0;
-      const confirmed = rows.reduce((sum, row) => sum + (deliveryByCampaign.get(row.id)?.delivered ?? row.deliveredCount), 0);
+      const confirmed = rows.reduce((sum, row) => sum + (deliveryByCampaign.get(row.id)?.delivered ?? 0), 0);
       const failed = rows.reduce((sum, row) => sum + (deliveryByCampaign.get(row.id)?.failed ?? row.failedCount), 0);
       const recipients = rows.reduce((sum, row) => sum + row.recipientCount, 0);
       return { channel, campaignsSent: rows.length, recipients, providerAccepted: accepted, delivered: tracked ? confirmed : null, failed: tracked ? failed : null, deliveryRate: tracked && recipients > 0 ? Math.round((confirmed / recipients) * 1000) / 10 : null, deliveryTrackingAvailable: tracked };
@@ -83,7 +87,7 @@ export class AnalyticsService {
     const recentCampaigns = recentRows.map((row) => ({
       id: row.id, name: row.name, channel: row.channel, status: row.status, sentAt: row.sentAt,
       recipients: row.recipientCount, providerAccepted: row.deliveredCount, failed: row.failedCount,
-      trackedDelivery: row.channel === 'WhatsApp' ? deliveryByCampaign.get(row.id)?.delivered ?? row.deliveredCount : null,
+      trackedDelivery: row.channel === 'WhatsApp' ? deliveryByCampaign.get(row.id)?.delivered ?? 0 : null,
     }));
 
     return {
@@ -97,7 +101,7 @@ export class AnalyticsService {
         campaignsSentPrevious: previousSent.length,
         recipients: sent.reduce((sum, row) => sum + row.recipientCount, 0),
         providerAccepted: sent.filter((row) => row.channel === 'SMS').reduce((sum, row) => sum + row.deliveredCount, 0),
-        whatsappDelivered: sent.filter((row) => row.channel === 'WhatsApp').reduce((sum, row) => sum + (deliveryByCampaign.get(row.id)?.delivered ?? row.deliveredCount), 0),
+        whatsappDelivered: sent.filter((row) => row.channel === 'WhatsApp').reduce((sum, row) => sum + (deliveryByCampaign.get(row.id)?.delivered ?? 0), 0),
         failed: sent.reduce((sum, row) => sum + row.failedCount, 0),
       },
       consent: {
