@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Header, Param, Patch, Post } from '@nestjs/common';
+import { Public } from '../auth/public.decorator.js';
 import { CampaignsService } from './campaigns.service.js';
 
 @Controller('campaigns')
@@ -11,7 +12,7 @@ export class CampaignsController {
   @Post('zoho/test-connection') testZohoConnection() { return this.campaigns.testZohoConnection(); }
   @Post(':id/whatsapp-delivery') refreshWhatsAppDelivery(@Param('id') id: string) { return this.campaigns.refreshWhatsAppDelivery(id); }
   @Post('test') sendTest(@Body() body: Record<string, unknown>) { return this.campaigns.sendTest(body); }
-  @Get(':id/content') @Header('Content-Type', 'text/html; charset=utf-8') content(@Param('id') id: string) { return this.campaigns.content(id); }
+  @Get(':id/content') @Public() @Header('Content-Type', 'text/html; charset=utf-8') content(@Param('id') id: string) { return this.campaigns.content(id); }
   @Post() create(@Body() body: Record<string, unknown>) { return this.campaigns.create(body); }
   @Patch(':id') update(@Param('id') id: string, @Body() body: Record<string, unknown>) { return this.campaigns.update(id, body); }
   @Post(':id/request-approval') requestApproval(@Param('id') id: string) { return this.campaigns.requestApproval(id); }

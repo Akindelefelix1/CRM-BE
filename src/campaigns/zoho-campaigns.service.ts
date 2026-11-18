@@ -123,7 +123,7 @@ export class ZohoCampaignsService {
     const campaignKey = this.value(response, 'campaignKey', 'campaignkey');
     if (!campaignKey)
       throw new BadGatewayException(
-        'Zoho Campaigns did not return a campaign key. Confirm that ZOHO_CAMPAIGNS_TOPIC_ID is set to a topic in this account if topic management is enabled, and that the public campaign content URL is reachable.',
+        this.campaignCreateDiagnostic(response),
       );
     return campaignKey;
   }
@@ -337,9 +337,53 @@ export class ZohoCampaignsService {
   }
 
   private value(payload: Record<string, unknown>, ...keys: string[]) {
-    for (const key of keys) {
-      if (typeof payload[key] === 'string') return payload[key] as string;
-    }
-    return '';
+    const wanted = new Set(keys.map((key) => key.toLowerCase()));
+    const find = (value: unknown, seen: Set<object>): string => {
+      if (!value || typeof value !== 'object' || seen.has(value)) return '';
+      seen.add(value);
+      for (const [key, child] of Object.entries(value)) {
+        if (
+          wanted.has(key.toLowerCase()) &&
+          (typeof child === 'string' || typeof child === 'number') &&
+          String(child).trim()
+        )
+          return String(child).trim();
+      }
+      for (const child of Object.values(value)) {
+        const match = find(child, seen);
+        if (match) return match;
+      }
+      return '';
+    };
+    return find(payload, new Set());
+  }
+
+  private campaignCreateDiagnostic(payload: Record<string, unknown>) {
+    const findText = (value: unknown, keys: Set<string>, seen = new Set<object>()): string => {
+      if (!value || typeof value !== 'object' || seen.has(value)) return '';
+      seen.add(value);
+      for (const [key, child] of Object.entries(value)) {
+        if (keys.has(key.toLowerCase()) && (typeof child === 'string' || typeof child === 'number'))
+          return String(child).trim();
+      }
+      for (const child of Object.values(value)) {
+        const match = findText(child, keys, seen);
+        if (match) return match;
+      }
+      return '';
+    };
+    const status = findText(payload, new Set(['status']));
+    const code = findText(payload, new Set(['code']));
+    const message = findText(payload, new Set(['message']));
+    const details = [
+      status && `status: ${status}`,
+      code && `code: ${code}`,
+      message && `message: ${message}`,
+    ].filter(Boolean);
+    return [
+      'Zoho Campaigns accepted the create request but returned no campaign key.',
+      ...details,
+      'Check that ZOHO_CAMPAIGNS_TOPIC_ID is set to a valid topic when updated topic management is enabled, the sender is approved, and the public campaign content URL is reachable.',
+    ].join(' ');
   }
 }
