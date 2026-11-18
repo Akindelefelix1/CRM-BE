@@ -40,7 +40,7 @@ export class ZohoCampaignsService {
       const created = await this.call(
         'addlistandcontacts',
         {
-          resfmt: 'JSON',
+          resfmt: 'json',
           listname: listName,
           signupform: 'private',
           mode: 'newlist',
@@ -71,7 +71,7 @@ export class ZohoCampaignsService {
           this.call(
             'json/listsubscribe',
             {
-              resfmt: 'JSON',
+              resfmt: 'json',
               listkey: listKey,
               contactinfo: JSON.stringify({
                 'First Name': contact.firstName,
@@ -107,7 +107,7 @@ export class ZohoCampaignsService {
     const response = await this.call(
       'createCampaign',
       {
-        resfmt: 'JSON',
+        resfmt: 'json',
         campaignname: campaign.name,
         from_email: fromEmail,
         from_name: process.env.ZOHO_CAMPAIGNS_FROM_NAME?.trim() || 'Cephas CRM',
@@ -131,7 +131,7 @@ export class ZohoCampaignsService {
   async sendCampaign(campaignKey: string) {
     return this.call(
       'sendcampaign',
-      { resfmt: 'JSON', campaignkey: campaignKey },
+      { resfmt: 'json', campaignkey: campaignKey },
       'ZohoCampaigns.campaign.UPDATE',
     );
   }
@@ -151,7 +151,7 @@ export class ZohoCampaignsService {
     return this.call(
       'sendcampaign?isschedule=true',
       {
-        resfmt: 'JSON',
+        resfmt: 'json',
         campaignkey: campaignKey,
         scheduledate: `${part('month')}/${part('day')}/${part('year')}`,
         schedulehour: part('hour'),
@@ -167,7 +167,7 @@ export class ZohoCampaignsService {
   async deleteCampaign(campaignKey: string) {
     return this.call(
       'deletecampaign',
-      { resfmt: 'JSON', campaignkey: campaignKey },
+      { resfmt: 'json', campaignkey: campaignKey },
       'ZohoCampaigns.campaign.DELETE',
       'GET',
     );
@@ -178,7 +178,7 @@ export class ZohoCampaignsService {
     // includes the campaign read scope. Never return the access token to callers.
     await this.call(
       'recentcampaigns',
-      { resfmt: 'JSON', range: '1', status: 'all' },
+      { resfmt: 'json', range: '1', status: 'all' },
       'ZohoCampaigns.campaign.READ',
       'GET',
     );
@@ -227,6 +227,27 @@ export class ZohoCampaignsService {
       );
     }
     const raw = await response.text().catch(() => '');
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.toLowerCase().includes('text/html')) {
+      const providerMessage = raw
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&amp;/gi, '&')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;|&apos;/gi, "'")
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
+        .slice(0, 500);
+      const providerCode = providerMessage.match(/error code as\s+(\d+)/i)?.[1];
+      throw new BadGatewayException(
+        `Zoho Campaigns returned an HTML error page instead of an API response (HTTP ${response.status}${providerCode ? `, provider code ${providerCode}` : ''}). ${providerMessage || 'Check the Campaigns API domain and OAuth account/data-center configuration.'}`,
+      );
+    }
     let payload: Record<string, unknown> = {};
     try {
       payload = JSON.parse(raw) as Record<string, unknown>;
