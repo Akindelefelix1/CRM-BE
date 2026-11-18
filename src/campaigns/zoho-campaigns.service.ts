@@ -230,6 +230,7 @@ export class ZohoCampaignsService {
     const contentType = response.headers.get('content-type') || '';
     if (contentType.toLowerCase().includes('text/html')) {
       const providerMessage = raw
+        .replace(/<!--[\s\S]*?-->/g, ' ')
         .replace(/<script[\s\S]*?<\/script>/gi, ' ')
         .replace(/<style[\s\S]*?<\/style>/gi, ' ')
         .replace(/<[^>]*>/g, ' ')
@@ -239,9 +240,9 @@ export class ZohoCampaignsService {
         .replace(/&#39;|&apos;/gi, "'")
         .replace(/&lt;/gi, '<')
         .replace(/&gt;/gi, '>')
+        .replace(/(?:-->|--|>)+/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
-        .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
         .slice(0, 500);
       const providerCode = providerMessage.match(/error code as\s+(\d+)/i)?.[1];
       throw new BadGatewayException(
