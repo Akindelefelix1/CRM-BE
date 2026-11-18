@@ -211,6 +211,9 @@ export class ZohoCampaignsService {
         headers: {
           Authorization: `Zoho-oauthtoken ${token}`,
           Accept: 'application/json',
+          ...(method === 'POST'
+            ? { 'Content-Type': 'application/x-www-form-urlencoded' }
+            : {}),
         },
         signal: AbortSignal.timeout(30_000),
       });
@@ -255,6 +258,22 @@ export class ZohoCampaignsService {
       payload.response && typeof payload.response === 'object'
         ? (payload.response as Record<string, unknown>)
         : payload;
+    if (/createCampaign/i.test(path)) {
+      const preview = raw
+        .replace(/\s+/g, ' ')
+        .replace(/(access_token|refresh_token|client_secret)\s*[=:]\s*[^,}\s]+/gi, '$1=[redacted]')
+        .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
+        .slice(0, 300);
+      Object.defineProperty(nested, '__zohoResponse', {
+        enumerable: false,
+        value: {
+          httpStatus: response.status,
+          contentType: response.headers.get('content-type') || 'unknown',
+          bodyLength: raw.length,
+          preview,
+        },
+      });
+    }
     const codeValue = nested.code;
     const code =
       typeof codeValue === 'string' || typeof codeValue === 'number'
@@ -374,14 +393,23 @@ export class ZohoCampaignsService {
     };
     const status = findText(payload, new Set(['status']));
     const code = findText(payload, new Set(['code']));
-    const message = findText(payload, new Set(['message']));
+    const message = findText(
+      payload,
+      new Set(['message', 'error_message', 'errormessage', 'description', 'reason']),
+    );
+    const responseDetails = payload.__zohoResponse as
+      | { httpStatus?: number; contentType?: string; bodyLength?: number; preview?: string }
+      | undefined;
     const details = [
       status && `status: ${status}`,
       code && `code: ${code}`,
       message && `message: ${message}`,
+      responseDetails &&
+        `HTTP ${responseDetails.httpStatus}; content type: ${responseDetails.contentType}; response length: ${responseDetails.bodyLength}`,
+      responseDetails?.preview && `response: ${responseDetails.preview}`,
     ].filter(Boolean);
     return [
-      'Zoho Campaigns accepted the create request but returned no campaign key.',
+      'Zoho Campaigns did not return a campaign key for the create request.',
       ...details,
       'Check that ZOHO_CAMPAIGNS_TOPIC_ID is set to a valid topic when updated topic management is enabled, the sender is approved, and the public campaign content URL is reachable.',
     ].join(' ');
