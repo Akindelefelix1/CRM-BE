@@ -8,6 +8,7 @@ export class CampaignsController {
 
   @Get() list() { return this.campaigns.list(); }
   @Get('sms/provider-status') smsProviderStatus() { return this.campaigns.smsProviderStatus(); }
+  @Post('termii/test-connection') testTermiiConnection() { return this.campaigns.testTermiiConnection(); }
   @Get('whatsapp/provider-status') whatsappProviderStatus() { return this.campaigns.whatsappProviderStatus(); }
   @Post('zoho/test-connection') testZohoConnection() { return this.campaigns.testZohoConnection(); }
   @Post(':id/whatsapp-delivery') refreshWhatsAppDelivery(@Param('id') id: string) { return this.campaigns.refreshWhatsAppDelivery(id); }

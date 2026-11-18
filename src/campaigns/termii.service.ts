@@ -11,8 +11,96 @@ type TermiiResult = {
   balance?: number;
 };
 
+type TermiiSender = {
+  sender_id?: string;
+  status?: string;
+  country?: string;
+};
+
 @Injectable()
 export class TermiiService {
+  async testConnection() {
+    const apiKey = process.env.TERMII_API_KEY?.trim();
+    if (!apiKey)
+      throw new ServiceUnavailableException(
+        'SMS delivery is not configured. Add TERMII_API_KEY to the API environment.',
+      );
+    const baseUrl = (
+      process.env.TERMII_BASE_URL || 'https://api.ng.termii.com'
+    ).replace(/\/$/, '');
+    const balanceUrl = new URL(`${baseUrl}/api/get-balance`);
+    balanceUrl.searchParams.set('api_key', apiKey);
+
+    let balanceResponse: Response;
+    try {
+      balanceResponse = await fetch(balanceUrl, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch {
+      throw new BadGatewayException('Could not reach the Termii SMS service');
+    }
+    const balance = (await balanceResponse.json().catch(() => null)) as
+      | { balance?: number; currency?: string; message?: string }
+      | null;
+    if (
+      !balanceResponse.ok ||
+      !balance ||
+      typeof balance.balance !== 'number' ||
+      typeof balance.currency !== 'string'
+    ) {
+      throw new BadGatewayException(
+        typeof balance?.message === 'string'
+          ? balance.message.slice(0, 300)
+          : 'Termii rejected the API key or returned an invalid wallet response.',
+      );
+    }
+
+    const configuredSenderId = process.env.TERMII_SENDER_ID?.trim() || null;
+    let senderIds: { senderId: string; status: string; country: string | null }[] = [];
+    const senderUrl = new URL(`${baseUrl}/api/sender-id`);
+    senderUrl.searchParams.set('api_key', apiKey);
+    if (configuredSenderId)
+      senderUrl.searchParams.set('name', configuredSenderId);
+    try {
+      const senderResponse = await fetch(senderUrl, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(15_000),
+      });
+      const senderPayload = (await senderResponse.json().catch(() => null)) as
+        | { content?: TermiiSender[]; message?: string }
+        | null;
+      if (senderResponse.ok && Array.isArray(senderPayload?.content)) {
+        senderIds = senderPayload.content.flatMap((item) =>
+          typeof item.sender_id === 'string'
+            ? [{
+                senderId: item.sender_id,
+                status: typeof item.status === 'string' ? item.status : 'unknown',
+                country: typeof item.country === 'string' ? item.country : null,
+              }]
+            : [],
+        );
+      }
+    } catch {
+      // Balance is enough to verify credentials. Sender ID lookup is supplemental.
+    }
+    const configuredSender = configuredSenderId
+      ? senderIds.find(
+          (item) =>
+            item.senderId.toLowerCase() === configuredSenderId.toLowerCase(),
+        ) ?? null
+      : null;
+    return {
+      connected: true,
+      provider: 'Termii',
+      balance: balance.balance,
+      currency: balance.currency,
+      senderId: configuredSenderId,
+      senderIdStatus: configuredSender?.status ?? null,
+      senderIds,
+    };
+  }
+
   async sendBulk(to: string[], message: string, senderId: string) {
     const apiKey = process.env.TERMII_API_KEY?.trim();
     if (!apiKey)

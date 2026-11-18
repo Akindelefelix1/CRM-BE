@@ -49,11 +49,18 @@ export class CampaignsService {
 
   smsProviderStatus() {
     return {
-      configured: Boolean(process.env.TERMII_API_KEY?.trim()),
+      configured: Boolean(
+        process.env.TERMII_API_KEY?.trim() &&
+          process.env.TERMII_SENDER_ID?.trim(),
+      ),
       senderId: process.env.TERMII_SENDER_ID?.trim() || null,
       countryCode: (process.env.TERMII_COUNTRY_CODE || '234').replace(/\D/g, ''),
       channel: process.env.TERMII_CHANNEL?.trim() || 'generic',
     };
+  }
+
+  testTermiiConnection() {
+    return this.termii.testConnection();
   }
 
   whatsappProviderStatus() {

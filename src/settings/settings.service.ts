@@ -24,7 +24,10 @@ export class SettingsService {
         },
         sms: {
           provider: 'Termii',
-          configured: Boolean(process.env.TERMII_API_KEY?.trim()),
+          configured: Boolean(
+            process.env.TERMII_API_KEY?.trim() &&
+              process.env.TERMII_SENDER_ID?.trim(),
+          ),
           sender: process.env.TERMII_SENDER_ID?.trim() || null,
         },
         whatsapp: {

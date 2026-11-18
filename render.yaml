@@ -35,6 +35,8 @@ services:
         value: Cephas CRM
       - key: ZOHO_CAMPAIGNS_TOPIC_ID
         sync: false
+      # Set this secret and an active approved sender ID in the Render dashboard.
+      # TERMII_BASE_URL should match the URL shown in the Termii account dashboard.
       - key: TERMII_API_KEY
         sync: false
       - key: TERMII_BASE_URL
